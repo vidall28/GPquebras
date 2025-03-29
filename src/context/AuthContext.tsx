@@ -216,20 +216,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 console.log('Definindo usuário de contingência:', fallbackUser);
                 setUser(fallbackUser);
                 
-                // Tenta inserir ou atualizar o usuário na tabela users
+                // Garantir que temos um ID definido antes de prosseguir
+                if (!fallbackUser.id) {
+                  console.error('ID do usuário não está definido, não é possível salvar na tabela users');
+                  setUser(fallbackUser);
+                  return;
+                }
+
+                // 4. Tenta inserir ou atualizar o usuário na tabela de usuários
                 try {
-                  console.log("Tentando criar/atualizar registro na tabela users para usuário de contingência");
+                  console.log("Tentando criar/atualizar registro na tabela users para evitar problemas futuros");
+                  console.log("ID do usuário para atualização:", fallbackUser.id);
                   
                   // Verificar se o usuário já existe
-                  const { data: existingUser } = await supabase
+                  const { data: existingUser, error: existingUserError } = await supabase
                     .from('users')
                     .select('id')
                     .eq('id', fallbackUser.id)
                     .single();
                     
+                  if (existingUserError && !existingUserError.message.includes('No rows found')) {
+                    console.error("Erro ao verificar existência do usuário:", existingUserError);
+                    // Continuar mesmo com erro, para não bloquear o login
+                  }
+                    
                   if (existingUser) {
+                    // Verificar e registrar todos os campos antes da atualização
+                    console.log("Atualizando usuário existente com dados:", {
+                      id: fallbackUser.id,
+                      name: fallbackUser.name,
+                      email: fallbackUser.email,
+                      role: fallbackUser.role,
+                      status: 'active'
+                    });
+                    
                     // Atualizar usuário existente
-                    await supabase
+                    const { error: updateError } = await supabase
                       .from('users')
                       .update({
                         name: fallbackUser.name,
@@ -239,10 +261,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                       })
                       .eq('id', fallbackUser.id);
                       
-                    console.log("Registro de usuário atualizado na tabela users");
+                    if (updateError) {
+                      console.error("Erro ao atualizar usuário:", updateError);
+                    } else {
+                      console.log("Registro de usuário atualizado na tabela users");
+                    }
                   } else {
-                    // Inserir novo usuário
-                    await supabase
+                    // Verificar e registrar todos os campos antes da inserção
+                    console.log("Criando novo usuário com dados:", {
+                      id: fallbackUser.id,
+                      name: fallbackUser.name,
+                      registration: fallbackUser.registration,
+                      email: fallbackUser.email,
+                      role: fallbackUser.role,
+                      status: 'active'
+                    });
+                    
+                    // Criar novo usuário
+                    const { error: insertError } = await supabase
                       .from('users')
                       .insert([{
                         id: fallbackUser.id,
@@ -253,10 +289,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         status: 'active'
                       }]);
                       
-                    console.log("Novo registro de usuário criado na tabela users");
+                    if (insertError) {
+                      console.error("Erro ao criar usuário:", insertError);
+                    } else {
+                      console.log("Novo registro de usuário criado na tabela users");
+                    }
                   }
-                } catch (dbError) {
-                  console.error("Erro ao criar/atualizar usuário na tabela:", dbError);
+                } catch (error) {
+                  console.error("Erro ao criar/atualizar usuário na tabela:", error);
                 }
               } else {
                 console.error('Falha na solução de contingência: não foi possível obter dados do usuário');
@@ -672,6 +712,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log("Verificação de sessão após login:", 
                    sessionCheck?.session ? "Sessão ativa" : "Sessão não encontrada");
         
+        // Fazer uma verificação básica de token
+        try {
+          console.log('Verificando token após login...');
+          const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
+          
+          if (sessionError) {
+            console.error('Erro ao verificar sessão após login:', sessionError);
+          } else if (!sessionCheck.session) {
+            console.error('Sessão não encontrada após login bem-sucedido');
+          } else {
+            console.log('Token verificado com sucesso, expira em:', new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
+          }
+        } catch (tokenError) {
+          console.error('Erro ao validar token:', tokenError);
+        }
+        
         // MODIFICAÇÃO: Garantir que navegue para o dashboard após definir o usuário
         window.setTimeout(() => {
           console.log('Redirecionando para o dashboard...');
@@ -684,62 +740,73 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA ROBUSTA para login
         console.log('Aplicando solução de contingência para continuar o login');
         
-        // Verificar se já estamos tentando criar um usuário de contingência
-        // para evitar loops no evento SIGNED_IN
-        const isContingencyInProgress = localStorage.getItem('auth_contingency_in_progress');
+        // Verificar se a contingência já está em andamento
+        if (localStorage.getItem('auth_contingency_in_progress')) {
+          console.log("Processo de contingência já em andamento, evitando duplicação");
+          return;
+        }
         
-        if (isContingencyInProgress) {
-          console.log('Processo de contingência já em andamento, evitando duplicação');
-        } else {
-          // Marcar que estamos em processo de contingência
-          localStorage.setItem('auth_contingency_in_progress', 'true');
+        // Marcar que a contingência está em andamento
+        localStorage.setItem('auth_contingency_in_progress', 'true');
+        
+        try {
+          // Tentar buscar dados do usuário a partir da sessão de autenticação
+          console.log("Tentando buscar dados do usuário a partir da API de autenticação");
           
-          // 1. Verificar no RPC se o usuário é administrador
-          let adminStatusFromDb = false;
-          try {
-            console.log("Verificando status de admin via RPC");
-            const { data: adminCheck } = await supabase.rpc('check_if_admin', {
-              user_id: authData.user.id 
-            });
-            if (adminCheck === true) {
-              adminStatusFromDb = true;
-              console.log("Confirmação de admin obtida via procedimento RPC");
-            }
-          } catch (rpcError) {
-            console.error("Erro ao verificar status de admin via RPC:", rpcError);
+          // Garantir que temos acesso aos dados da sessão
+          const { data: authData } = await supabase.auth.getUser();
+          
+          if (!authData || !authData.user || !authData.user.id) {
+            console.error("Não foi possível obter dados básicos do usuário autenticado");
+            localStorage.removeItem('auth_contingency_in_progress');
+            throw new Error("Dados de usuário indisponíveis na sessão");
           }
           
-          // 2. Determinar role com base em todas as verificações
-          const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
-          console.log("Decisão final sobre status de admin:", shouldBeAdmin);
+          console.log("Dados básicos do usuário obtidos:", authData.user.id);
           
-          // 3. Criar usuário de contingência
+          // Verificar se é admin
+          const userMetadata = authData.user.user_metadata || {};
+          const isAdminInMetadata = userMetadata.role === 'admin';
+          const isAdminByEmail = ADMIN_EMAILS.includes(authData.user.email || '');
+          const shouldBeAdmin = isAdminInMetadata || isAdminByEmail;
+          
+          // Criar um usuário com os dados disponíveis da sessão
           const fallbackUser: User = {
             id: authData.user.id,
             name: authData.user.user_metadata?.name || authData.user.email?.split('@')[0] || 'Usuário',
             registration: authData.user.user_metadata?.registration || '00000000',
             email: authData.user.email || '',
-            role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
+            role: shouldBeAdmin ? 'admin' : 'user',
             status: 'active'
           };
           
-          console.log('Definindo usuário de contingência:', fallbackUser);
-          setUser(fallbackUser);
+          console.log("Criando usuário de fallback durante login:", fallbackUser);
           
-          // 4. Tenta inserir ou atualizar o usuário na tabela de usuários
+          // Verificar dados críticos
+          if (!fallbackUser.id || !fallbackUser.email) {
+            console.error("Dados críticos não disponíveis para criação do usuário:", { id: fallbackUser.id, email: fallbackUser.email });
+            localStorage.removeItem('auth_contingency_in_progress');
+            throw new Error("Dados críticos do usuário indisponíveis");
+          }
+          
+          // Tentar inserir/atualizar no banco de dados, mas não bloquear o login se falhar
           try {
-            console.log("Tentando criar/atualizar registro na tabela users para evitar problemas futuros");
+            console.log("Tentando criar/atualizar usuário no banco de dados:", fallbackUser.id);
             
             // Verificar se o usuário já existe
-            const { data: existingUser } = await supabase
+            const { data: existingUser, error: checkError } = await supabase
               .from('users')
               .select('id')
               .eq('id', fallbackUser.id)
               .single();
               
+            if (checkError && !checkError.message.includes('No rows found')) {
+              console.error("Erro ao verificar existência do usuário:", checkError);
+            }
+            
             if (existingUser) {
               // Atualizar usuário existente
-              await supabase
+              const { error: updateError } = await supabase
                 .from('users')
                 .update({
                   name: fallbackUser.name,
@@ -749,10 +816,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 })
                 .eq('id', fallbackUser.id);
                 
-              console.log("Registro de usuário atualizado na tabela users");
+              if (updateError) {
+                console.error("Erro ao atualizar usuário durante login:", updateError);
+              } else {
+                console.log("Usuário atualizado com sucesso na tabela users");
+              }
             } else {
-              // Inserir novo usuário
-              await supabase
+              // Criar novo usuário
+              const { error: insertError } = await supabase
                 .from('users')
                 .insert([{
                   id: fallbackUser.id,
@@ -763,29 +834,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   status: 'active'
                 }]);
                 
-              console.log("Novo registro de usuário criado na tabela users");
+              if (insertError) {
+                console.error("Erro ao criar usuário durante login:", insertError);
+              } else {
+                console.log("Novo usuário criado com sucesso na tabela users");
+              }
             }
           } catch (dbError) {
-            console.error("Erro ao criar/atualizar usuário na tabela:", dbError);
+            console.error("Erro ao tentar salvar dados do usuário:", dbError);
+            // Não bloquear o login se houver erro ao salvar
           }
           
-          // Remover flag de contingência em andamento após 3 segundos
-          setTimeout(() => {
-            localStorage.removeItem('auth_contingency_in_progress');
-            console.log("Flag de contingência removida");
-          }, 3000);
+          // Limpar flag de contingência
+          localStorage.removeItem('auth_contingency_in_progress');
           
-          toast.success('Login realizado com sucesso!');
-          
-          if (shouldBeAdmin) {
-            toast.info('Acesso de administrador concedido');
-          }
-          
-          // 5. Navegar para o dashboard após definir o usuário
-          window.setTimeout(() => {
-            console.log('Redirecionando para o dashboard após contingência...');
+          // Definir o usuário no estado local
+          if (fallbackUser) {
+            console.log('Definindo usuário após aplicação de contingência:', fallbackUser);
+            setUser(fallbackUser);
+            toast.success('Login realizado com sucesso!');
+            
+            if (fallbackUser.role === 'admin') {
+              toast.info('Acesso de administrador concedido');
+            }
+            
+            // Fazer uma verificação básica de token
+            try {
+              console.log('Verificando token após login...');
+              const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
+              
+              if (sessionError) {
+                console.error('Erro ao verificar sessão após login:', sessionError);
+              } else if (!sessionCheck.session) {
+                console.error('Sessão não encontrada após login bem-sucedido');
+              } else {
+                console.log('Token verificado com sucesso, expira em:', new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
+              }
+            } catch (tokenError) {
+              console.error('Erro ao validar token:', tokenError);
+            }
+            
+            // Continuar com o redirecionamento
             navigate('/dashboard');
-          }, 500);
+          } else {
+            console.error('Não foi possível criar um usuário válido após contingência');
+            toast.error('Erro ao processar seu login. Tente novamente.');
+            
+            // Deslogar para evitar problemas
+            await supabase.auth.signOut();
+            setUser(null);
+          }
+        } catch (fallbackError) {
+          console.error("Erro na solução de contingência:", fallbackError);
+          localStorage.removeItem('auth_contingency_in_progress');
+          throw fallbackError;
         }
       }
       
