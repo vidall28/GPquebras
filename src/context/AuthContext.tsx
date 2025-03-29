@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User, ADMIN_EMAILS } from '@/lib/supabase';
+import { supabase, User, ADMIN_EMAILS, Tables } from '@/lib/supabase';
 
 // Função para recriar o cliente Supabase e tentar corrigir problemas de API key
 const resetSupabaseClient = async () => {
@@ -622,275 +622,135 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Metadados do usuário Auth:', authData.user.user_metadata);
       console.log('ID do usuário autenticado:', authData.user.id);
       
-      // Verificar informações de administrador antes de buscar dados completos
+      // NOVA ABORDAGEM: Verificar se é admin e criar usuário básico imediatamente
       const userMetadata = authData.user.user_metadata || {};
       const isAdminInMetadata = userMetadata.role === 'admin';
+      const isAdminByEmail = ADMIN_EMAILS.includes(email);
+      const shouldBeAdmin = isAdminInMetadata || isAdminByEmail;
       
-      // Lista de emails conhecidos de administradores
-      const adminEmails = ADMIN_EMAILS || ['admin@example.com']; // Usa ADMIN_EMAILS do supabase.ts
-      const isAdminByEmail = adminEmails.includes(email);
+      // Criar usuário básico com dados disponíveis
+      const basicUser: User = {
+        id: authData.user.id,
+        name: userMetadata.name || authData.user.email?.split('@')[0] || 'Usuário',
+        registration: userMetadata.registration || '00000000',
+        email: authData.user.email || email,
+        role: shouldBeAdmin ? 'admin' : 'user',
+        status: 'active'
+      };
       
-      console.log('Verificação preliminar de administrador:',
-                 'Nos metadados:', isAdminInMetadata,
-                 'Por email:', isAdminByEmail);
+      // Definir o usuário imediatamente para melhorar a experiência
+      console.log('Definindo usuário básico:', basicUser);
+      setUser(basicUser);
       
-      // MODIFICAÇÃO: Adicionar um timeout para evitar deadlock no processo de login
-      // Aumentado para 15 segundos para dar mais tempo
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário após login')), 15000)
-      );
+      // Mostrar mensagem de sucesso
+      toast.success('Login realizado com sucesso!');
       
-      try {
-        // Buscar os dados completos do usuário na tabela users
-        const userDataPromise = supabase
-          .from('users')
-          .select('*')
-          .eq('id', authData.user.id)
-          .eq('status', 'active')
-          .single();
-          
-        // Usar Race para evitar ficar preso se a consulta não responder
-        const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
-        
-        console.log('Resposta da busca do usuário:', 
-                   userData ? 'Dados encontrados' : 'Usuário não encontrado', 
-                   userError ? `Erro: ${userError.message}` : 'Sem erros');
-          
-        if (userError) {
-          // Verificar se é um erro de API key e tentar corrigir
-          if (userError.message === 'No API key found in request' || userError.message?.includes('API key')) {
-            console.log("Detectado erro de API key durante login, tentando reinicializar cliente Supabase...");
-            const reset = await resetSupabaseClient();
-            
-            if (reset) {
-              // Se conseguiu reinicializar, tentar buscar os dados novamente
-              console.log("Cliente reinicializado, buscando dados do usuário novamente durante login...");
-              try {
-                const { data: retryData, error: retryError } = await supabase
-                  .from('users')
-                  .select('*')
-                  .eq('id', userData.id)
-                  .eq('status', 'active')
-                  .single();
-                
-                if (!retryError && retryData) {
-                  console.log("Dados do usuário recuperados após reinicialização durante login:", retryData);
-                  return {
-                    ...retryData,
-                    isAdmin: retryData.role === 'admin'
-                  };
-                }
-              } catch (retryErr) {
-                console.error("Falha na segunda tentativa durante login:", retryErr);
-              }
-            }
-          }
-          
-          throw userError;
-        }
-        
-        if (!userData) {
-          throw new Error('Usuário não encontrado na tabela users');
-        }
-        
-        // Login bem-sucedido
-        const currentUser: User = {
-          id: userData.id,
-          name: userData.name,
-          registration: userData.registration,
-          email: userData.email,
-          role: userData.role,
-          status: userData.status
-        };
-        
-        console.log('Definindo usuário após login bem-sucedido:', currentUser);
-        setUser(currentUser);
-        toast.success('Login realizado com sucesso!');
-        
-        // Verificar a sessão após o login para garantir persistência
-        const { data: sessionCheck } = await supabase.auth.getSession();
-        console.log("Verificação de sessão após login:", 
-                   sessionCheck?.session ? "Sessão ativa" : "Sessão não encontrada");
-        
-        // Fazer uma verificação básica de token
-        try {
-          console.log('Verificando token após login...');
-          const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
-          
-          if (sessionError) {
-            console.error('Erro ao verificar sessão após login:', sessionError);
-          } else if (!sessionCheck.session) {
-            console.error('Sessão não encontrada após login bem-sucedido');
-          } else {
-            console.log('Token verificado com sucesso, expira em:', new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
-          }
-        } catch (tokenError) {
-          console.error('Erro ao validar token:', tokenError);
-        }
-        
-        // MODIFICAÇÃO: Garantir que navegue para o dashboard após definir o usuário
-        window.setTimeout(() => {
-          console.log('Redirecionando para o dashboard...');
-          navigate('/dashboard');
-        }, 500);
-        
-      } catch (userFetchError) {
-        console.error('Erro ao buscar dados do usuário ou timeout:', userFetchError);
-        
-        // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA ROBUSTA para login
-        console.log('Aplicando solução de contingência para continuar o login');
-        
-        // Verificar se a contingência já está em andamento
-        if (localStorage.getItem('auth_contingency_in_progress')) {
-          console.log("Processo de contingência já em andamento, evitando duplicação");
-          return;
-        }
-        
-        // Marcar que a contingência está em andamento
-        localStorage.setItem('auth_contingency_in_progress', 'true');
-        
-        try {
-          // Tentar buscar dados do usuário a partir da sessão de autenticação
-          console.log("Tentando buscar dados do usuário a partir da API de autenticação");
-          
-          // Garantir que temos acesso aos dados da sessão
-          const { data: authData } = await supabase.auth.getUser();
-          
-          if (!authData || !authData.user || !authData.user.id) {
-            console.error("Não foi possível obter dados básicos do usuário autenticado");
-            localStorage.removeItem('auth_contingency_in_progress');
-            throw new Error("Dados de usuário indisponíveis na sessão");
-          }
-          
-          console.log("Dados básicos do usuário obtidos:", authData.user.id);
-          
-          // Verificar se é admin
-          const userMetadata = authData.user.user_metadata || {};
-          const isAdminInMetadata = userMetadata.role === 'admin';
-          const isAdminByEmail = ADMIN_EMAILS.includes(authData.user.email || '');
-          const shouldBeAdmin = isAdminInMetadata || isAdminByEmail;
-          
-          // Criar um usuário com os dados disponíveis da sessão
-          const fallbackUser: User = {
-            id: authData.user.id,
-            name: authData.user.user_metadata?.name || authData.user.email?.split('@')[0] || 'Usuário',
-            registration: authData.user.user_metadata?.registration || '00000000',
-            email: authData.user.email || '',
-            role: shouldBeAdmin ? 'admin' : 'user',
-            status: 'active'
-          };
-          
-          console.log("Criando usuário de fallback durante login:", fallbackUser);
-          
-          // Verificar dados críticos
-          if (!fallbackUser.id || !fallbackUser.email) {
-            console.error("Dados críticos não disponíveis para criação do usuário:", { id: fallbackUser.id, email: fallbackUser.email });
-            localStorage.removeItem('auth_contingency_in_progress');
-            throw new Error("Dados críticos do usuário indisponíveis");
-          }
-          
-          // Tentar inserir/atualizar no banco de dados, mas não bloquear o login se falhar
-          try {
-            console.log("Tentando criar/atualizar usuário no banco de dados:", fallbackUser.id);
-            
-            // Verificar se o usuário já existe
-            const { data: existingUser, error: checkError } = await supabase
-              .from('users')
-              .select('id')
-              .eq('id', fallbackUser.id)
-              .single();
-              
-            if (checkError && !checkError.message.includes('No rows found')) {
-              console.error("Erro ao verificar existência do usuário:", checkError);
-            }
-            
-            if (existingUser) {
-              // Atualizar usuário existente
-              const { error: updateError } = await supabase
-                .from('users')
-                .update({
-                  name: fallbackUser.name,
-                  email: fallbackUser.email,
-                  role: fallbackUser.role,
-                  status: 'active'
-                })
-                .eq('id', fallbackUser.id);
-                
-              if (updateError) {
-                console.error("Erro ao atualizar usuário durante login:", updateError);
-              } else {
-                console.log("Usuário atualizado com sucesso na tabela users");
-              }
-            } else {
-              // Criar novo usuário
-              const { error: insertError } = await supabase
-                .from('users')
-                .insert([{
-                  id: fallbackUser.id,
-                  name: fallbackUser.name,
-                  registration: fallbackUser.registration,
-                  email: fallbackUser.email,
-                  role: fallbackUser.role,
-                  status: 'active'
-                }]);
-                
-              if (insertError) {
-                console.error("Erro ao criar usuário durante login:", insertError);
-              } else {
-                console.log("Novo usuário criado com sucesso na tabela users");
-              }
-            }
-          } catch (dbError) {
-            console.error("Erro ao tentar salvar dados do usuário:", dbError);
-            // Não bloquear o login se houver erro ao salvar
-          }
-          
-          // Limpar flag de contingência
-          localStorage.removeItem('auth_contingency_in_progress');
-          
-          // Definir o usuário no estado local
-          if (fallbackUser) {
-            console.log('Definindo usuário após aplicação de contingência:', fallbackUser);
-            setUser(fallbackUser);
-            toast.success('Login realizado com sucesso!');
-            
-            if (fallbackUser.role === 'admin') {
-              toast.info('Acesso de administrador concedido');
-            }
-            
-            // Fazer uma verificação básica de token
-            try {
-              console.log('Verificando token após login...');
-              const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
-              
-              if (sessionError) {
-                console.error('Erro ao verificar sessão após login:', sessionError);
-              } else if (!sessionCheck.session) {
-                console.error('Sessão não encontrada após login bem-sucedido');
-              } else {
-                console.log('Token verificado com sucesso, expira em:', new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
-              }
-            } catch (tokenError) {
-              console.error('Erro ao validar token:', tokenError);
-            }
-            
-            // Continuar com o redirecionamento
-            navigate('/dashboard');
-          } else {
-            console.error('Não foi possível criar um usuário válido após contingência');
-            toast.error('Erro ao processar seu login. Tente novamente.');
-            
-            // Deslogar para evitar problemas
-            await supabase.auth.signOut();
-            setUser(null);
-          }
-        } catch (fallbackError) {
-          console.error("Erro na solução de contingência:", fallbackError);
-          localStorage.removeItem('auth_contingency_in_progress');
-          throw fallbackError;
-        }
+      if (basicUser.role === 'admin') {
+        toast.info('Acesso de administrador concedido');
       }
       
+      // Verificar token rapidamente
+      try {
+        console.log('Verificando token após login...');
+        const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError) {
+          console.error('Erro ao verificar sessão após login:', sessionError);
+        } else if (!sessionCheck.session) {
+          console.error('Sessão não encontrada após login bem-sucedido');
+        } else {
+          console.log('Token verificado com sucesso, expira em:', 
+                     new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
+        }
+      } catch (tokenError) {
+        console.error('Erro ao validar token:', tokenError);
+      }
+      
+      // Iniciar redirecionamento para o dashboard primeiro
+      console.log('Iniciando redirecionamento para dashboard...');
+      navigate('/dashboard');
+      
+      // Após redirecionar, tentar completar o perfil em segundo plano
+      try {
+        console.log('Tentando buscar perfil completo em segundo plano...');
+        
+        // Usando uma promise com timeout mais curto e tipagem correta
+        const userPromise = new Promise<Tables['users'] | null>(async (resolve) => {
+          try {
+            // Tentar buscar o usuário da tabela
+            const { data, error } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', basicUser.id)
+              .single();
+              
+            if (error) {
+              console.warn('Erro ao buscar usuário completo:', error.message);
+              resolve(null);
+            } else {
+              resolve(data);
+            }
+          } catch (e) {
+            console.warn('Exceção ao buscar usuário:', e);
+            resolve(null);
+          }
+        });
+        
+        // Definir timeout curto (3 segundos)
+        const timeoutPromise = new Promise<null>((resolve) => {
+          setTimeout(() => {
+            console.log('Timeout na busca do perfil completo');
+            resolve(null);
+          }, 3000);
+        });
+        
+        // Buscar o perfil com timeout
+        const userData = await Promise.race([userPromise, timeoutPromise]) as Tables['users'] | null;
+        
+        if (userData) {
+          console.log('Perfil completo obtido com sucesso:', userData);
+          
+          // Atualizar usuário no state com tipagem adequada
+          const completeUser: User = {
+            id: userData.id,
+            name: userData.name || basicUser.name,
+            registration: userData.registration || basicUser.registration,
+            email: userData.email || basicUser.email,
+            role: (userData.role as 'admin' | 'user') || basicUser.role,
+            status: (userData.status as 'active' | 'inactive') || 'active'
+          };
+          
+          console.log('Atualizando usuário com perfil completo:', completeUser);
+          setUser(completeUser);
+        } else {
+          console.log('Perfil completo não encontrado, tentando criar perfil...');
+          
+          // Tentar criar o perfil sem bloquear o fluxo
+          try {
+            const { error: insertError } = await supabase
+              .from('users')
+              .insert([{
+                id: basicUser.id,
+                name: basicUser.name,
+                registration: basicUser.registration,
+                email: basicUser.email,
+                role: basicUser.role,
+                status: 'active'
+              }]);
+              
+            if (insertError) {
+              console.warn('Erro ao criar perfil em segundo plano:', insertError.message);
+            } else {
+              console.log('Perfil criado com sucesso em segundo plano');
+            }
+          } catch (e) {
+            console.warn('Exceção ao criar perfil:', e);
+          }
+        }
+      } catch (backgroundError) {
+        console.warn('Erro em segundo plano:', backgroundError);
+        // Não interferir na experiência do usuário com erros em segundo plano
+      }
     } catch (error) {
       console.error('Erro ao fazer login:', error);
       toast.error('Erro ao realizar login: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
