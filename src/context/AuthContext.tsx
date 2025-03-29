@@ -625,10 +625,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Metadados do usuário Auth:', authData.user.user_metadata);
       console.log('ID do usuário autenticado:', authData.user.id);
       
-      // NOVA ABORDAGEM: Verificar se é admin e criar usuário básico imediatamente
+      // NOVA ABORDAGEM MELHORADA: Verificar se é admin com timeout
       const userMetadata = authData.user.user_metadata || {};
-      const isAdminInMetadata = userMetadata.role === 'admin';
+      
+      // Verificar email administrativo (mais rápido, não depende de banco)
       const isAdminByEmail = ADMIN_EMAILS.includes(email);
+      
+      // Verificar nos metadados (também rápido, não depende de banco)
+      const isAdminInMetadata = userMetadata.role === 'admin';
+      
+      // Se já temos confirmação por email ou metadados, usar isso
       const shouldBeAdmin = isAdminInMetadata || isAdminByEmail;
       
       // Criar usuário básico com dados disponíveis - garantindo dados válidos
@@ -648,53 +654,81 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Mostrar mensagem de sucesso
       toast.success('Login realizado com sucesso!');
       
-      // Verificar token rapidamente
-      try {
-        console.log('Verificando token após login...');
-        const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError) {
-          console.error('Erro ao verificar sessão após login:', sessionError);
-        } else if (!sessionCheck.session) {
-          console.error('Sessão não encontrada após login bem-sucedido');
-        } else {
-          console.log('Token verificado com sucesso, expira em:', 
-                     new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
-        }
-      } catch (tokenError) {
-        console.error('Erro ao validar token:', tokenError);
-      }
-      
-      // Iniciar redirecionamento para o dashboard primeiro
+      // IMPORTANTE: Redirecionar imediatamente, sem esperar por verificações adicionais
       console.log('Iniciando redirecionamento para dashboard...');
       navigate('/dashboard');
       
-      // Após redirecionar, tentar criar/atualizar o perfil em segundo plano
+      // Verificações adicionais em segundo plano (não bloqueiam o fluxo principal)
       window.setTimeout(async () => {
         try {
-          console.log('Iniciando criação/atualização do perfil em segundo plano...');
+          // Verificar token rapidamente
+          try {
+            console.log('Verificando token após login...');
+            const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
+            
+            if (sessionError) {
+              console.error('Erro ao verificar sessão após login:', sessionError);
+            } else if (!sessionCheck.session) {
+              console.error('Sessão não encontrada após login bem-sucedido');
+            } else {
+              console.log('Token verificado com sucesso, expira em:', 
+                        new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
+            }
+          } catch (tokenError) {
+            console.error('Erro ao validar token:', tokenError);
+          }
           
-          // Usar a função helper upsertUser para lidar com a operação
-          const result = await upsertUser(basicUser);
+          // Tentar criar/atualizar o perfil em segundo plano
+          try {
+            console.log('Criando/atualizando o perfil em segundo plano...');
+            
+            // Usar a função helper upsertUser para lidar com a operação
+            const result = await upsertUser(basicUser);
+            
+            if (result.success) {
+              console.log('Perfil criado/atualizado com sucesso');
+            } else {
+              console.warn('Não foi possível criar/atualizar o perfil:', result.error);
+            }
+          } catch (profileError) {
+            console.warn('Erro ao criar/atualizar perfil:', profileError);
+          }
           
-          if (result.success) {
-            console.log('Perfil criado/atualizado com sucesso');
-          } else {
-            console.warn('Não foi possível criar/atualizar o perfil:', result.error);
+          // Se não temos certeza do status de admin, verificar com o banco
+          // Apenas para atualizar o state, sem bloquear a navegação
+          if (!shouldBeAdmin) {
+            console.log('Verificando status de administrador no banco...');
+            try {
+              // Usar a função com timeout para evitar bloqueios
+              const isAdminInDB = await checkIfUserIsAdmin(basicUser.id);
+              
+              if (isAdminInDB && basicUser.role !== 'admin') {
+                console.log('Usuário identificado como admin no banco, atualizando estado...');
+                
+                // Atualizar o estado do usuário para refletir o papel de admin
+                setUser({
+                  ...basicUser,
+                  role: 'admin'
+                });
+              }
+            } catch (adminCheckError) {
+              console.warn('Erro ao verificar status admin no banco:', adminCheckError);
+              // Ignorar erro, não bloquear fluxo principal
+            }
           }
         } catch (backgroundError) {
-          console.warn('Erro em segundo plano:', backgroundError);
+          console.warn('Erro em operações em segundo plano:', backgroundError);
           // Não interferir na experiência do usuário com erros em segundo plano
+        } finally {
+          // Garantir que o loading seja desligado mesmo em caso de erro
+          setIsLoading(false);
         }
-      }, 1000); // Executar após 1 segundo para garantir que o redirecionamento ocorra primeiro
+      }, 300); // Pequeno delay para garantir que o redirecionamento ocorra primeiro
       
     } catch (error) {
       console.error('Erro ao fazer login:', error);
       toast.error('Erro ao realizar login: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
-    } finally {
       setIsLoading(false);
-      // Remover qualquer flag de contingência remanescente
-      localStorage.removeItem('auth_contingency_in_progress');
     }
   };
 

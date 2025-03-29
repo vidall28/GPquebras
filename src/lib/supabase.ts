@@ -238,51 +238,48 @@ export const ADMIN_EMAILS = [
   // adicione mais emails aqui
 ];
 
-// Função auxiliar para verificar se um usuário é administrador
-// Esta função simula o procedimento RPC 'check_if_admin' enquanto ele não é criado no Supabase
+// Função para verificar se o usuário é administrador com timeout
 export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
-  try {
-    console.log("Verificando permissões de administrador para usuário ID:", userId);
-    
-    // 1. Tentar buscar o usuário diretamente
-    const { data: userData, error: userError } = await supabase
-      .from('users')
-      .select('role, email')
-      .eq('id', userId)
-      .single();
-      
-    if (!userError && userData && userData.role === 'admin') {
-      console.log("Usuário encontrado na tabela users com papel de administrador");
-      return true;
-    }
-    
-    if (userData && ADMIN_EMAILS.includes(userData.email)) {
-      console.log("Usuário encontrado na tabela users com email administrativo");
-      return true;
-    }
-    
-    // 2. Verificar via API de autenticação
-    const { data: authData } = await supabase.auth.getUser();
-    if (authData && authData.user) {
-      const userMetadata = authData.user.user_metadata || {};
-      
-      if (userMetadata.role === 'admin') {
-        console.log("Usuário tem papel de administrador nos metadados");
-        return true;
-      }
-      
-      if (ADMIN_EMAILS.includes(authData.user.email || '')) {
-        console.log("Usuário tem email administrativo conhecido");
-        return true;
-      }
-    }
-    
-    console.log("Não foi possível confirmar permissões administrativas pelo sistema auxiliar");
-    return false;
-  } catch (error) {
-    console.error("Erro ao verificar permissões de administrador:", error);
+  if (!userId) {
+    console.error('checkIfUserIsAdmin: ID do usuário não fornecido');
     return false;
   }
+
+  console.log(`Verificando se o usuário ${userId} é administrador...`);
+  
+  // Criar uma promessa que resolverá com o status de administrador ou rejeitará com timeout
+  return new Promise((resolve, reject) => {
+    // Definir um timeout de 3 segundos para evitar bloqueio da interface
+    const timeoutId = setTimeout(() => {
+      console.warn(`Timeout ao verificar status de administrador para o usuário ${userId}`);
+      resolve(false); // Resolver com false em vez de rejeitar para não quebrar o fluxo
+    }, 3000);
+    
+    // Tentar verificar se é administrador através do RPC
+    (async () => {
+      try {
+        console.log(`Chamando o procedimento check_if_admin para o usuário ${userId}`);
+        const { data, error } = await supabase.rpc('check_if_admin', { user_id: userId });
+        
+        // Limpar o timeout, pois a requisição foi concluída
+        clearTimeout(timeoutId);
+        
+        if (error) {
+          console.error('Erro ao verificar status de administrador:', error);
+          resolve(false); // Resolver com false em caso de erro para não quebrar o fluxo
+          return;
+        }
+        
+        console.log(`Resultado da verificação de admin para o usuário ${userId}:`, data);
+        resolve(!!data); // Converter para boolean
+      } catch (error) {
+        // Limpar o timeout em caso de erro
+        clearTimeout(timeoutId);
+        console.error('Exceção ao verificar status de administrador:', error);
+        resolve(false); // Resolver com false em caso de erro para não quebrar o fluxo
+      }
+    })();
+  });
 };
 
 // Extender a funcionalidade do supabase para incluir um simulador de RPC

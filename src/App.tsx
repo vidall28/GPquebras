@@ -30,6 +30,9 @@ import Users from "@/pages/users";
 import Reports from "@/pages/reports";
 import NotFound from "@/pages/NotFound";
 import Diagnostics from "@/pages/diagnostics";
+import CategoryEdit from '@/pages/categories/edit';
+import CategoriesList from '@/pages/categories/list';
+import DiagnosticsPage from '@/pages/diagnostics';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -98,12 +101,7 @@ const App = () => (
               {/* Public Routes */}
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
-              
-              {/* Rota de diagnóstico - acessível publicamente para ajudar a solucionar problemas de conexão */}
-              <Route 
-                path="/diagnostico" 
-                element={<Diagnostics />} 
-              />
+              <Route path="/diagnostico" element={<DiagnosticsPage />} />
               
               {/* Redirect root to login or dashboard based on auth */}
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
