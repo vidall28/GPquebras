@@ -130,6 +130,113 @@ const checkSupabaseConfig = () => {
   };
 };
 
+// Componente para resolver problemas de login
+const LoginTroubleshooting = () => {
+  const { resetSupabaseClient } = useAuth();
+  const [isResetting, setIsResetting] = useState(false);
+  
+  const handleResetClient = async () => {
+    setIsResetting(true);
+    try {
+      await resetSupabaseClient();
+      toast.success('Cliente Supabase reinicializado. Tente fazer login novamente.');
+    } catch (error) {
+      console.error('Erro ao reiniciar cliente:', error);
+      toast.error('Erro ao reiniciar cliente');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+  
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Soluções para Problemas de Login</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Alert>
+          <AlertTitle>Está tendo problemas para fazer login?</AlertTitle>
+          <AlertDescription>
+            Listamos abaixo as principais soluções para problemas comuns de login.
+          </AlertDescription>
+        </Alert>
+        
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-lg font-medium mb-2">1. Reinicializar o cliente</h3>
+            <p className="text-sm text-muted-foreground mb-2">
+              Isso pode resolver problemas de API key, timeout ou configuração.
+            </p>
+            <Button 
+              onClick={handleResetClient} 
+              disabled={isResetting}
+            >
+              {isResetting ? 'Reinicializando...' : 'Reinicializar Cliente Supabase'}
+            </Button>
+          </div>
+          
+          <div>
+            <h3 className="text-lg font-medium mb-2">2. Limpar o cache do navegador</h3>
+            <p className="text-sm text-muted-foreground mb-2">
+              Problemas de cookie ou armazenamento local podem afetar o login.
+            </p>
+            <Button 
+              onClick={clearLocalCache} 
+              variant="outline"
+            >
+              Limpar Cache Local
+            </Button>
+          </div>
+          
+          <div>
+            <h3 className="text-lg font-medium mb-2">3. Verificar a conexão</h3>
+            <p className="text-sm text-muted-foreground mb-2">
+              Problemas de rede podem causar timeouts durante o login.
+            </p>
+            <Button 
+              onClick={runConnectionTest} 
+              variant="outline"
+            >
+              Testar Conexão
+            </Button>
+          </div>
+          
+          <Alert variant="warning">
+            <AlertTitle>Ainda não consegue entrar?</AlertTitle>
+            <AlertDescription>
+              <ol className="list-decimal pl-5 space-y-1 mt-2">
+                <li>Verifique se você está usando o email e senha corretos</li>
+                <li>Tente usar uma rede de internet diferente</li>
+                <li>Desative extensões de bloqueio de cookies e rastreamento</li>
+                <li>Tente um navegador diferente</li>
+                <li>Se o problema persistir, entre em contato com o suporte técnico</li>
+              </ol>
+            </AlertDescription>
+          </Alert>
+          
+          <div className="bg-muted p-4 rounded-md">
+            <h4 className="font-semibold mb-2">Mensagens comuns de erro:</h4>
+            <ul className="space-y-2">
+              <li>
+                <Badge variant="outline">Timeout ao buscar dados do usuário</Badge>
+                <p className="text-sm mt-1">Problema de conexão com o banco de dados. Reinicie o cliente e tente novamente.</p>
+              </li>
+              <li>
+                <Badge variant="outline">No API key found</Badge>
+                <p className="text-sm mt-1">Problema com a autenticação da API. Use o botão de reiniciar cliente.</p>
+              </li>
+              <li>
+                <Badge variant="outline">JWT expired</Badge>
+                <p className="text-sm mt-1">O token de autenticação expirou. Limpe o cache e tente novamente.</p>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
 const DiagnosticsPage: React.FC = () => {
   const { user, isAdmin, isAuthenticated, resetSupabaseClient } = useAuth();
   const navigate = useNavigate();
@@ -279,6 +386,11 @@ const DiagnosticsPage: React.FC = () => {
   return (
     <div className="container mx-auto py-10">
       <h1 className="text-2xl font-bold mb-6">Diagnóstico do Sistema</h1>
+      
+      {/* Login Troubleshooting aceita todos os usuários, mesmo não logados */}
+      <LoginTroubleshooting />
+      
+      <div className="my-6 border-t border-border"></div>
       
       {!user ? (
         <Alert color="red" title="Acesso não autenticado">

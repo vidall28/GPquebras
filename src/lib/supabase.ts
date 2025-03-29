@@ -4,34 +4,13 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-// Verificar se as variáveis de ambiente estão definidas
-if (!supabaseUrl || !supabaseKey) {
-  console.error('Erro: Variáveis de ambiente do Supabase não estão definidas.');
-  console.error('VITE_SUPABASE_URL:', supabaseUrl ? 'Definido' : 'Indefinido');
-  console.error('VITE_SUPABASE_ANON_KEY:', supabaseKey ? 'Definido' : 'Indefinido');
-  
-  // Usar valores padrão definidos diretamente para debug
-  // IMPORTANTE: Remover esta parte em produção
-  console.warn('Usando valores padrão para desenvolvimento - NÃO USE EM PRODUÇÃO!');
-}
-
-// Log para debug dos valores de configuração (valores parciais para segurança)
+// Verificações de segurança e log - mais detalhados
 console.log('Configuração do Supabase:');
 console.log('URL:', supabaseUrl);
 console.log('API Key:', supabaseKey ? `${supabaseKey.substring(0, 5)}...${supabaseKey.substring(supabaseKey.length - 5)}` : 'Indefinida');
 
-// Configurar o cliente Supabase com opções mais robustas
-// No início do arquivo, onde inicializa o cliente Supabase:
-
-// Obter as configurações do Supabase
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-// Verificar e logar as configurações
-console.log('Configuração do Supabase:');
-console.log('URL:', supabaseUrl);
-console.log('API Key:', supabaseAnonKey ? `${supabaseAnonKey.substring(0, 5)}...${supabaseAnonKey.substring(supabaseAnonKey.length - 5)}` : 'Não definida');
-
-if (!supabaseUrl || !supabaseAnonKey) {
+// Alertar sobre problemas com a configuração
+if (!supabaseUrl || !supabaseKey) {
   console.error('ERRO CRÍTICO: Configuração do Supabase incompleta!');
 }
 
@@ -45,81 +24,37 @@ const supabaseOptions = {
   global: {
     headers: {
       'X-Client-Info': 'quebras-trocas-gp',
-      'apikey': supabaseAnonKey,
+      'apikey': supabaseKey,
       'Content-Type': 'application/json',
     },
     fetch: async (url: string, options: any = {}) => {
-      // Assegurar que o cabeçalho Authorization esteja presente
+      // Logs importantes para debug
+      console.log('Iniciando fetch para', url);
+      
+      // Assegurar que headers existam
       if (!options.headers) {
         options.headers = {};
       }
       
-      // Logar informações importantes para debug
-      console.log('Iniciando fetch para', url);
-      
-      // Recuperar token salvo
-      const savedToken = localStorage.getItem('sb-auth-token');
-      console.log('Recuperando token [sb-auth-token]:', savedToken ? 'Encontrado' : 'Não encontrado');
-      
-      // Se tivermos um token salvo, incluí-lo manualmente
-      if (savedToken) {
-        try {
-          const tokenData = JSON.parse(savedToken);
-          if (tokenData && tokenData.access_token) {
-            options.headers['Authorization'] = `Bearer ${tokenData.access_token}`;
-          }
-        } catch (e) {
-          console.error('Erro ao processar token salvo:', e);
-        }
-      }
-      
-      // Se não há Authorization header, adicionar ao menos a API key
-      if (!options.headers['Authorization']) {
-        options.headers['Authorization'] = `Bearer ${supabaseAnonKey}`;
-      }
-      
       // Garantir que a API key esteja presente
-      options.headers['apikey'] = supabaseAnonKey;
+      if (!options.headers['apikey']) {
+        options.headers['apikey'] = supabaseKey;
+      }
+      
+      // Garantir que Authorization esteja presente
+      if (!options.headers['Authorization']) {
+        options.headers['Authorization'] = `Bearer ${supabaseKey}`;
+      }
+      
+      // Logs de debugging para headers mais importantes
+      console.log('Headers da requisição:');
+      console.log('- API Key:', options.headers['apikey'] ? 'Configurada' : 'Não configurada');
+      console.log('- Authorization:', options.headers['Authorization'] ? 'Configurada' : 'Não configurada');
       
       // Executar o fetch original
       try {
         const response = await fetch(url, options);
         console.log('Resposta recebida de', url + ':', response.status);
-        
-        if (response.status === 403) {
-          console.warn('Resposta 403 Forbidden recebida. Verificar token de autenticação.');
-        }
-        
-        // Se for uma resposta 401/403, tentar salvar o token atualizado
-        if (response.status === 401 || response.status === 403) {
-          try {
-            // Tentar obter sessão novamente
-            const authUrl = `${supabaseUrl}/auth/v1/token?grant_type=refresh_token`;
-            const refreshToken = localStorage.getItem('sb-refresh-token');
-            
-            if (refreshToken) {
-              console.log('Tentando renovar token com refresh token');
-              const refreshResponse = await fetch(authUrl, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': supabaseAnonKey
-                },
-                body: JSON.stringify({ refresh_token: refreshToken })
-              });
-              
-              if (refreshResponse.ok) {
-                const newTokenData = await refreshResponse.json();
-                localStorage.setItem('sb-auth-token', JSON.stringify(newTokenData));
-                console.log('Token renovado com sucesso');
-              }
-            }
-          } catch (refreshError) {
-            console.error('Erro ao tentar renovar token:', refreshError);
-          }
-        }
-        
-        console.log('Finalizando fetch para', url);
         return response;
       } catch (error) {
         console.error('Erro no fetch para', url, error);
@@ -129,8 +64,11 @@ const supabaseOptions = {
   }
 };
 
-// Criar o cliente com as opções avançadas e exportá-lo para uso em outros arquivos
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, supabaseOptions);
+// CRIAR e EXPORTAR o cliente Supabase
+export const supabase = createClient(supabaseUrl, supabaseKey, supabaseOptions);
+
+// Log de confirmação
+console.log('Cliente Supabase inicializado com URL:', supabaseUrl);
 
 // Adicionar hook para salvar o token quando for obtido
 supabase.auth.onAuthStateChange((event, session) => {
@@ -157,8 +95,6 @@ supabase.auth.onAuthStateChange((event, session) => {
     localStorage.removeItem('sb-refresh-token');
   }
 });
-
-console.log('Cliente Supabase inicializado com URL:', supabaseUrl);
 
 // Tipos para as tabelas do Supabase
 export type Tables = {
@@ -248,16 +184,59 @@ export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
   console.log(`Verificando se o usuário ${userId} é administrador...`);
   
   // Criar uma promessa que resolverá com o status de administrador ou rejeitará com timeout
-  return new Promise((resolve, reject) => {
-    // Definir um timeout de 3 segundos para evitar bloqueio da interface
+  return new Promise((resolve) => {
+    // Definir um timeout de 2 segundos para evitar bloqueio da interface
     const timeoutId = setTimeout(() => {
-      console.warn(`Timeout ao verificar status de administrador para o usuário ${userId}`);
+      console.warn(`Timeout ao verificar status de administrador para o usuário ${userId} (limite de 2 segundos)`);
       resolve(false); // Resolver com false em vez de rejeitar para não quebrar o fluxo
-    }, 3000);
+    }, 2000); // Reduzido para 2 segundos
     
-    // Tentar verificar se é administrador através do RPC
+    // Tentar verificar se é administrador através do RPC ou métodos alternativos
     (async () => {
       try {
+        // Verificar primeiro métodos mais rápidos e diretos
+        console.log(`Verificando admin para usuário ${userId} via métodos alternativos...`);
+        
+        // 1. Verificar via metadados do usuário autenticado
+        try {
+          const { data: authUser } = await supabase.auth.getUser();
+          const userEmail = authUser?.user?.email;
+          
+          if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
+            console.log(`Usuário ${userId} identificado como admin via email: ${userEmail}`);
+            clearTimeout(timeoutId);
+            return resolve(true);
+          }
+          
+          const userMeta = authUser?.user?.user_metadata;
+          if (userMeta && userMeta.role === 'admin') {
+            console.log(`Usuário ${userId} identificado como admin via metadados`);
+            clearTimeout(timeoutId);
+            return resolve(true);
+          }
+        } catch (metaError) {
+          console.error('Erro ao verificar admin via metadados:', metaError);
+        }
+        
+        // 2. Verificar diretamente na tabela de usuários (mais rápido que RPC)
+        try {
+          console.log(`Verificando admin para usuário ${userId} via tabela users...`);
+          const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('role')
+            .eq('id', userId)
+            .maybeSingle();
+          
+          if (!userError && userData && userData.role === 'admin') {
+            console.log(`Usuário ${userId} identificado como admin via tabela users`);
+            clearTimeout(timeoutId);
+            return resolve(true);
+          }
+        } catch (dbError) {
+          console.error('Erro ao verificar admin via tabela users:', dbError);
+        }
+        
+        // 3. Por último, tentar o RPC (pode ser mais lento)
         console.log(`Chamando o procedimento check_if_admin para o usuário ${userId}`);
         const { data, error } = await supabase.rpc('check_if_admin', { user_id: userId });
         
@@ -265,18 +244,17 @@ export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
         clearTimeout(timeoutId);
         
         if (error) {
-          console.error('Erro ao verificar status de administrador:', error);
-          resolve(false); // Resolver com false em caso de erro para não quebrar o fluxo
-          return;
+          console.error('Erro ao verificar status de administrador via RPC:', error);
+          return resolve(false);
         }
         
         console.log(`Resultado da verificação de admin para o usuário ${userId}:`, data);
-        resolve(!!data); // Converter para boolean
+        return resolve(!!data);
       } catch (error) {
         // Limpar o timeout em caso de erro
         clearTimeout(timeoutId);
         console.error('Exceção ao verificar status de administrador:', error);
-        resolve(false); // Resolver com false em caso de erro para não quebrar o fluxo
+        return resolve(false);
       }
     })();
   });
@@ -680,5 +658,73 @@ export const upsertUser = async (user: User): Promise<{ success: boolean; error?
   } catch (error) {
     console.error('Erro durante upsert de usuário:', error);
     return { success: false, error };
+  }
+};
+
+// Função para verificar rapidamente a conexão com o Supabase
+export const quickConnectionCheck = async (): Promise<{ ok: boolean, latency: number, message: string }> => {
+  console.log('Executando verificação rápida de conexão com Supabase...');
+  
+  try {
+    const startTime = Date.now();
+    
+    // Verificar se temos as configurações básicas
+    if (!supabaseUrl || !supabaseKey) {
+      return {
+        ok: false,
+        latency: -1,
+        message: 'Configurações do Supabase não encontradas'
+      };
+    }
+    
+    // Fazer uma requisição simples que não exige autenticação
+    const { error } = await supabase
+      .from('users')
+      .select('count', { count: 'exact', head: true })
+      .limit(1);
+    
+    const endTime = Date.now();
+    const latency = endTime - startTime;
+    
+    if (error) {
+      console.error('Erro na verificação rápida de conexão:', error);
+      
+      // Verificar se é um erro de API key
+      if (error.message?.includes('JWT') || error.message?.includes('key') || error.code === '401') {
+        return {
+          ok: false,
+          latency,
+          message: `Erro de API key: ${error.message}`
+        };
+      }
+      
+      // Verificar se é um erro de conexão
+      if (error.message?.includes('fetch') || error.message?.includes('network') || error.code === 'NETWORK_ERROR') {
+        return {
+          ok: false,
+          latency,
+          message: `Erro de conexão: ${error.message}`
+        };
+      }
+      
+      return {
+        ok: false,
+        latency,
+        message: `Erro: ${error.message}`
+      };
+    }
+    
+    return {
+      ok: true,
+      latency,
+      message: `Conexão OK (${latency}ms)`
+    };
+  } catch (error) {
+    console.error('Exceção na verificação rápida de conexão:', error);
+    return {
+      ok: false,
+      latency: -1,
+      message: error instanceof Error ? error.message : 'Erro desconhecido'
+    };
   }
 }; 

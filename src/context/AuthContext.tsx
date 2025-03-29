@@ -1,11 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User, ADMIN_EMAILS, Tables, upsertUser } from '@/lib/supabase';
+import { supabase, User, ADMIN_EMAILS, Tables, upsertUser, quickConnectionCheck } from '@/lib/supabase';
 
 // Função para recriar o cliente Supabase e tentar corrigir problemas de API key
 const resetSupabaseClient = async () => {
-  console.log('===== TENTATIVA DE REINICIALIZAÇÃO DO CLIENTE SUPABASE =====');
+  console.log('===== INICIANDO REINICIALIZAÇÃO DO CLIENTE SUPABASE =====');
   
   try {
     // Recuperar as variáveis de ambiente novamente
@@ -18,13 +18,14 @@ const resetSupabaseClient = async () => {
       return false;
     }
     
-    console.log('API URL:', supabaseUrl);
-    console.log('API Key length:', supabaseKey.length);
+    console.log('URL da API:', supabaseUrl);
+    console.log('Tamanho da API Key:', supabaseKey.length);
     
     // Limpar o cache de autenticação
     try {
       localStorage.removeItem('sb-auth-token');
       localStorage.removeItem('sb-auth-token-code-verifier');
+      localStorage.removeItem('sb-refresh-token');
       localStorage.removeItem('auth_contingency_in_progress');
       console.log('Cache de autenticação limpo');
     } catch (e) {
@@ -32,23 +33,41 @@ const resetSupabaseClient = async () => {
     }
     
     // Atualizar headers globais para incluir a API key
-    supabase.headers = {
-      ...supabase.headers,
-      'apikey': supabaseKey,
-      'Authorization': `Bearer ${supabaseKey}`
-    };
+    try {
+      // @ts-ignore - Acessando propriedade interna do Supabase
+      if (supabase.headers) {
+        // @ts-ignore
+        supabase.headers = {
+          // @ts-ignore
+          ...supabase.headers,
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`
+        };
+        console.log('Headers globais atualizados');
+      } else {
+        console.warn('Não foi possível acessar os headers globais');
+      }
+    } catch (headerError) {
+      console.error('Erro ao atualizar headers globais:', headerError);
+    }
     
     // Verificar se o cliente foi reinicializado corretamente com um teste simples
-    const { error } = await supabase.auth.getSession();
-    
-    if (error) {
-      console.error('Erro após reinicialização do cliente:', error);
-      toast.error('Erro ao conectar com o Supabase: ' + error.message);
+    try {
+      const { error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error('Erro após reinicialização do cliente:', error);
+        toast.error('Erro ao conectar com o Supabase: ' + error.message);
+        return false;
+      }
+    } catch (sessionError) {
+      console.error('Erro ao verificar sessão após reinicialização:', sessionError);
       return false;
     }
     
     console.log('Cliente Supabase reinicializado com sucesso');
     toast.success('Conexão com o Supabase restabelecida');
+    
     return true;
   } catch (e) {
     console.error('Erro crítico ao reinicializar cliente Supabase:', e);
@@ -67,6 +86,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isAdmin: boolean;
   isLoading: boolean;
+  resetSupabaseClient: () => Promise<boolean>;
 }
 
 // Create the context
@@ -590,10 +610,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log(`Iniciando processo de login para: ${email}`);
       
+      // NOVO: Verificar rapidamente a conexão antes de prosseguir
+      const connectionCheck = await quickConnectionCheck();
+      console.log('Verificação de conexão:', connectionCheck);
+      
+      if (!connectionCheck.ok) {
+        console.warn('Problemas na conexão detectados:', connectionCheck.message);
+        
+        // Se for um problema de API key, tentar reiniciar o cliente
+        if (connectionCheck.message.includes('API key')) {
+          console.log('Tentando reiniciar o cliente Supabase devido a problema de API key');
+          const resetSuccess = await resetSupabaseClient();
+          
+          if (!resetSuccess) {
+            toast.error(`Erro de conexão: ${connectionCheck.message}`);
+            setIsLoading(false);
+            return;
+          }
+          
+          // Verificar novamente após reiniciar
+          const newCheck = await quickConnectionCheck();
+          if (!newCheck.ok) {
+            toast.error(`Conexão ainda com problemas: ${newCheck.message}`);
+            setIsLoading(false);
+            return;
+          }
+          
+          console.log('Conexão restaurada após reiniciar cliente');
+        } else if (connectionCheck.latency > 5000) {
+          // Se a latência for muito alta, avisar o usuário
+          toast.warning(`Conexão lenta (${connectionCheck.latency}ms). O login pode demorar.`);
+        }
+      }
+      
       // Limpar qualquer resquício de sessão anterior
       console.log('Limpando dados residuais de sessão anterior');
       localStorage.removeItem('supabase.auth.token');
       sessionStorage.removeItem('supabase.auth.token');
+      localStorage.removeItem('sb-auth-token');
+      localStorage.removeItem('sb-refresh-token');
       
       // Limpar cache de tentativas de contingência
       localStorage.removeItem('auth_contingency_in_progress');
@@ -616,7 +671,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (authError || !authData.user) {
         console.error('Erro ao fazer login:', authError);
-        toast.error('Credenciais inválidas');
+        toast.error(`Credenciais inválidas${authError ? `: ${authError.message}` : ''}`);
         setIsLoading(false);
         return;
       }
@@ -625,108 +680,90 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Metadados do usuário Auth:', authData.user.user_metadata);
       console.log('ID do usuário autenticado:', authData.user.id);
       
-      // NOVA ABORDAGEM MELHORADA: Verificar se é admin com timeout
-      const userMetadata = authData.user.user_metadata || {};
-      
+      // ABORDAGEM ULTRA SIMPLIFICADA:
+      // 1. Verificar admin por email (método mais rápido)
+      // 2. Criar um usuário básico imediatamente
+      // 3. Redirecionar para o dashboard
+      // 4. Buscar dados completos em segundo plano
+
       // Verificar email administrativo (mais rápido, não depende de banco)
       const isAdminByEmail = ADMIN_EMAILS.includes(email);
       
-      // Verificar nos metadados (também rápido, não depende de banco)
-      const isAdminInMetadata = userMetadata.role === 'admin';
+      // Obter informações básicas dos metadados
+      const userMetadata = authData.user.user_metadata || {};
+      const userName = userMetadata.name || userMetadata.full_name || email.split('@')[0];
+      const userRegistration = userMetadata.registration || '000000';
       
-      // Se já temos confirmação por email ou metadados, usar isso
-      const shouldBeAdmin = isAdminInMetadata || isAdminByEmail;
-      
-      // Criar usuário básico com dados disponíveis - garantindo dados válidos
+      // Criar usuário básico com dados GARANTIDOS disponíveis
       const basicUser: User = {
         id: authData.user.id,
-        name: userMetadata.name || email.split('@')[0] || 'Usuário', // Usar parte do email como nome
-        registration: userMetadata.registration || '00000000',
-        email: email, // Usar o email do login que sabemos ser válido
-        role: shouldBeAdmin ? 'admin' : 'user',
+        name: userName,
+        registration: userRegistration,
+        email: email,
+        role: isAdminByEmail ? 'admin' : 'user',
         status: 'active'
       };
       
-      // Definir o usuário imediatamente para melhorar a experiência
+      // IMPORTANTE: Definir o usuário IMEDIATAMENTE para desbloquear a interface
       console.log('Definindo usuário básico:', basicUser);
       setUser(basicUser);
-      
-      // Mostrar mensagem de sucesso
       toast.success('Login realizado com sucesso!');
       
-      // IMPORTANTE: Redirecionar imediatamente, sem esperar por verificações adicionais
-      console.log('Iniciando redirecionamento para dashboard...');
+      // CRÍTICO: Redirecionar para o dashboard IMEDIATAMENTE
       navigate('/dashboard');
       
-      // Verificações adicionais em segundo plano (não bloqueiam o fluxo principal)
-      window.setTimeout(async () => {
+      // BACKGROUND: Buscar dados completos e melhorar o perfil do usuário
+      setTimeout(async () => {
         try {
-          // Verificar token rapidamente
-          try {
-            console.log('Verificando token após login...');
-            const { data: sessionCheck, error: sessionError } = await supabase.auth.getSession();
-            
-            if (sessionError) {
-              console.error('Erro ao verificar sessão após login:', sessionError);
-            } else if (!sessionCheck.session) {
-              console.error('Sessão não encontrada após login bem-sucedido');
-            } else {
-              console.log('Token verificado com sucesso, expira em:', 
-                        new Date(sessionCheck.session.expires_at * 1000).toLocaleString());
-            }
-          } catch (tokenError) {
-            console.error('Erro ao validar token:', tokenError);
-          }
+          console.log('Buscando dados completos do usuário em segundo plano...');
           
-          // Tentar criar/atualizar o perfil em segundo plano
-          try {
-            console.log('Criando/atualizando o perfil em segundo plano...');
-            
-            // Usar a função helper upsertUser para lidar com a operação
-            const result = await upsertUser(basicUser);
-            
-            if (result.success) {
-              console.log('Perfil criado/atualizado com sucesso');
-            } else {
-              console.warn('Não foi possível criar/atualizar o perfil:', result.error);
-            }
-          } catch (profileError) {
-            console.warn('Erro ao criar/atualizar perfil:', profileError);
-          }
+          // Tentar buscar o perfil completo do usuário
+          const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', basicUser.id)
+            .maybeSingle();
           
-          // Se não temos certeza do status de admin, verificar com o banco
-          // Apenas para atualizar o state, sem bloquear a navegação
-          if (!shouldBeAdmin) {
-            console.log('Verificando status de administrador no banco...');
+          if (userError) {
+            console.warn('Erro ao buscar perfil do usuário:', userError);
+          } else if (userData) {
+            console.log('Perfil do usuário encontrado:', userData);
+            
+            // Atualizar o state com dados mais completos
+            setUser({
+              id: userData.id,
+              name: userData.name || basicUser.name,
+              registration: userData.registration || basicUser.registration,
+              email: userData.email || basicUser.email,
+              role: userData.role || basicUser.role,
+              status: userData.status || basicUser.status
+            });
+            
+            // Se o usuário atual não é admin mas deveria ser, mostrar uma mensagem
+            if (basicUser.role !== 'admin' && userData.role === 'admin') {
+              toast.info('Permissões administrativas verificadas e atualizadas');
+            }
+          } else {
+            console.log('Perfil do usuário não encontrado, criando novo perfil');
+            
+            // Tentar criar o perfil do usuário
             try {
-              // Usar a função com timeout para evitar bloqueios
-              const isAdminInDB = await checkIfUserIsAdmin(basicUser.id);
-              
-              if (isAdminInDB && basicUser.role !== 'admin') {
-                console.log('Usuário identificado como admin no banco, atualizando estado...');
-                
-                // Atualizar o estado do usuário para refletir o papel de admin
-                setUser({
-                  ...basicUser,
-                  role: 'admin'
-                });
-              }
-            } catch (adminCheckError) {
-              console.warn('Erro ao verificar status admin no banco:', adminCheckError);
-              // Ignorar erro, não bloquear fluxo principal
+              await upsertUser(basicUser);
+              console.log('Perfil do usuário criado com sucesso');
+            } catch (createError) {
+              console.error('Erro ao criar perfil:', createError);
             }
           }
-        } catch (backgroundError) {
-          console.warn('Erro em operações em segundo plano:', backgroundError);
-          // Não interferir na experiência do usuário com erros em segundo plano
+        } catch (bgError) {
+          console.warn('Erro nas operações em segundo plano:', bgError);
         } finally {
-          // Garantir que o loading seja desligado mesmo em caso de erro
+          // Garantir que o loading seja desligado
           setIsLoading(false);
         }
-      }, 300); // Pequeno delay para garantir que o redirecionamento ocorra primeiro
+      }, 100);
       
     } catch (error) {
-      console.error('Erro ao fazer login:', error);
+      console.error('Erro fatal ao fazer login:', error);
       toast.error('Erro ao realizar login: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
       setIsLoading(false);
     }
@@ -1104,7 +1141,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         isAuthenticated: !!user,
         isAdmin: user?.role === 'admin',
-        isLoading
+        isLoading,
+        resetSupabaseClient
       }}
     >
       {children}
