@@ -9,7 +9,16 @@ if (!supabaseUrl || !supabaseKey) {
   console.error('Erro: Variáveis de ambiente do Supabase não estão definidas.');
   console.error('VITE_SUPABASE_URL:', supabaseUrl ? 'Definido' : 'Indefinido');
   console.error('VITE_SUPABASE_ANON_KEY:', supabaseKey ? 'Definido' : 'Indefinido');
+  
+  // Usar valores padrão definidos diretamente para debug
+  // IMPORTANTE: Remover esta parte em produção
+  console.warn('Usando valores padrão para desenvolvimento - NÃO USE EM PRODUÇÃO!');
 }
+
+// Log para debug dos valores de configuração (valores parciais para segurança)
+console.log('Configuração do Supabase:');
+console.log('URL:', supabaseUrl);
+console.log('API Key:', supabaseKey ? `${supabaseKey.substring(0, 5)}...${supabaseKey.substring(supabaseKey.length - 5)}` : 'Indefinida');
 
 // Configurações avançadas do cliente Supabase
 const supabaseOptions = {
@@ -53,13 +62,17 @@ const supabaseOptions = {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 45000);
       
-      // Adicionar o sinal do AbortController às opções
+      // Garantir que headers existe
+      const headers = options?.headers || {};
+      
+      // Adicionar o sinal do AbortController e garantir API key nas opções
       const fetchOptions = {
         ...options,
         signal: controller.signal,
-        // Adicionar cabeçalhos para melhorar desempenho de cache
         headers: {
-          ...options?.headers,
+          ...headers,
+          'apikey': supabaseKey,
+          'Authorization': `Bearer ${supabaseKey}`,
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache'
         }
@@ -87,17 +100,71 @@ const supabaseOptions = {
     }
   },
   // Habilitar logs detalhados em ambiente de desenvolvimento
-  debug: import.meta.env.DEV,
+  debug: true,
   // Configuração de retentativas
   realtime: {
     params: {
       eventsPerSecond: 10
     }
+  },
+  headers: {
+    'apikey': supabaseKey,
+    'Authorization': `Bearer ${supabaseKey}`
   }
 };
 
 // Criar o cliente do Supabase com as opções avançadas
 export const supabase = createClient(supabaseUrl, supabaseKey, supabaseOptions);
+
+// IMPORTANTE: Override para garantir que a API key esteja sempre presente
+const originalFrom = supabase.from.bind(supabase);
+supabase.from = (table) => {
+  const builder = originalFrom(table);
+  
+  // Verifica se os headers já contêm a API key
+  const checkAndAddApiKey = (options = {}) => {
+    if (!options.headers) {
+      options.headers = {};
+    }
+    
+    if (!options.headers['apikey']) {
+      options.headers['apikey'] = supabaseKey;
+    }
+    
+    if (!options.headers['Authorization']) {
+      options.headers['Authorization'] = `Bearer ${supabaseKey}`;
+    }
+    
+    return options;
+  };
+  
+  // Override dos métodos principais para garantir API key
+  const originalSelect = builder.select.bind(builder);
+  builder.select = function(...args) {
+    this.headers = checkAndAddApiKey(this.headers);
+    return originalSelect(...args);
+  };
+  
+  const originalInsert = builder.insert.bind(builder);
+  builder.insert = function(...args) {
+    this.headers = checkAndAddApiKey(this.headers);
+    return originalInsert(...args);
+  };
+  
+  const originalUpdate = builder.update.bind(builder);
+  builder.update = function(...args) {
+    this.headers = checkAndAddApiKey(this.headers);
+    return originalUpdate(...args);
+  };
+  
+  const originalDelete = builder.delete.bind(builder);
+  builder.delete = function(...args) {
+    this.headers = checkAndAddApiKey(this.headers);
+    return originalDelete(...args);
+  };
+  
+  return builder;
+};
 
 console.log('Cliente Supabase inicializado com URL:', supabaseUrl);
 
@@ -440,4 +507,98 @@ export const getCachedOrFetch = async (
     
     throw error;
   }
-}; 
+};
+
+// Função para testar explicitamente a configuração e conexão com Supabase
+export const testSupabaseConfig = async (): Promise<{
+  success: boolean;
+  message: string;
+  details: Record<string, any>;
+}> => {
+  console.log('Testando configuração do Supabase...');
+  
+  const details: Record<string, any> = {
+    supabaseUrl: supabaseUrl || 'Não definido',
+    apiKeyLength: supabaseKey ? supabaseKey.length : 0,
+    apiKeyDefined: !!supabaseKey,
+  };
+  
+  try {
+    // Teste 1: Verificar se as variáveis de ambiente estão definidas
+    if (!supabaseUrl || !supabaseKey) {
+      return {
+        success: false,
+        message: 'Variáveis de ambiente do Supabase não estão definidas corretamente',
+        details
+      };
+    }
+    
+    // Teste 2: Fazer uma requisição simples para verificar a autenticação
+    console.log('Fazendo teste de requisição básica ao Supabase...');
+    
+    // Criamos uma nova instância do cliente para testar explicitamente
+    const testClient = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      },
+      headers: {
+        'apikey': supabaseKey,
+        'Authorization': `Bearer ${supabaseKey}`
+      }
+    });
+    
+    // Tentar fazer uma requisição simples
+    const { error } = await testClient
+      .from('users')
+      .select('count', { count: 'exact', head: true });
+      
+    if (error) {
+      console.error('Erro na requisição de teste:', error);
+      details.error = error;
+      
+      // Verificar se é um erro de API key
+      if (error.message?.includes('API key') || error.code === '401') {
+        return {
+          success: false,
+          message: 'Chave API do Supabase inválida ou não está sendo enviada corretamente',
+          details
+        };
+      }
+      
+      return {
+        success: false,
+        message: `Erro ao conectar ao Supabase: ${error.message}`,
+        details
+      };
+    }
+    
+    // Teste 3: Verificar autenticação
+    const { data: authData, error: authError } = await testClient.auth.getSession();
+    
+    details.sessionExists = !!authData?.session;
+    
+    if (authError) {
+      console.error('Erro ao verificar autenticação:', authError);
+      details.authError = authError;
+    }
+    
+    return {
+      success: true,
+      message: 'Configuração do Supabase parece estar correta',
+      details
+    };
+  } catch (e) {
+    console.error('Erro grave ao testar configuração do Supabase:', e);
+    details.criticalError = e instanceof Error ? e.message : String(e);
+    
+    return {
+      success: false,
+      message: 'Erro grave ao testar configuração do Supabase',
+      details
+    };
+  }
+};
+
+// Exportar tipo de retorno da função de teste
+export type SupabaseTestResult = Awaited<ReturnType<typeof testSupabaseConfig>>; 

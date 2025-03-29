@@ -3,6 +3,60 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import { supabase, User, ADMIN_EMAILS } from '@/lib/supabase';
 
+// Função para recriar o cliente Supabase e tentar corrigir problemas de API key
+const resetSupabaseClient = async () => {
+  console.log('===== TENTATIVA DE REINICIALIZAÇÃO DO CLIENTE SUPABASE =====');
+  
+  try {
+    // Recuperar as variáveis de ambiente novamente
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('Erro: Variáveis de ambiente ainda não estão disponíveis');
+      toast.error('Erro na configuração do Supabase. Verifique as variáveis de ambiente.');
+      return false;
+    }
+    
+    console.log('API URL:', supabaseUrl);
+    console.log('API Key length:', supabaseKey.length);
+    
+    // Limpar o cache de autenticação
+    try {
+      localStorage.removeItem('sb-auth-token');
+      localStorage.removeItem('sb-auth-token-code-verifier');
+      localStorage.removeItem('auth_contingency_in_progress');
+      console.log('Cache de autenticação limpo');
+    } catch (e) {
+      console.error('Erro ao limpar cache:', e);
+    }
+    
+    // Atualizar headers globais para incluir a API key
+    supabase.headers = {
+      ...supabase.headers,
+      'apikey': supabaseKey,
+      'Authorization': `Bearer ${supabaseKey}`
+    };
+    
+    // Verificar se o cliente foi reinicializado corretamente com um teste simples
+    const { error } = await supabase.auth.getSession();
+    
+    if (error) {
+      console.error('Erro após reinicialização do cliente:', error);
+      toast.error('Erro ao conectar com o Supabase: ' + error.message);
+      return false;
+    }
+    
+    console.log('Cliente Supabase reinicializado com sucesso');
+    toast.success('Conexão com o Supabase restabelecida');
+    return true;
+  } catch (e) {
+    console.error('Erro crítico ao reinicializar cliente Supabase:', e);
+    toast.error('Erro ao reinicializar cliente Supabase');
+    return false;
+  }
+};
+
 // Define auth context interface
 interface AuthContextType {
   user: User | null;
@@ -253,7 +307,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
             
           if (userError) {
-            console.error('Erro ao buscar dados do usuário no evento de autenticação:', userError);
+            console.error("Erro ao buscar dados do usuário no evento de autenticação:", userError);
+            
+            // Verificar se é um erro de API key e tentar corrigir
+            if (userError.message === 'No API key found in request' || userError.message?.includes('API key')) {
+              console.log("Detectado erro de API key, tentando reinicializar cliente Supabase...");
+              const reset = await resetSupabaseClient();
+              
+              if (reset) {
+                // Se conseguiu reinicializar, tentar buscar os dados novamente
+                console.log("Cliente reinicializado, buscando dados do usuário novamente...");
+                try {
+                  const { data: retryData, error: retryError } = await supabase
+                    .from('users')
+                    .select('*')
+                    .eq('id', session.user.id)
+                    .single();
+                    
+                  if (!retryError && retryData) {
+                    console.log("Dados do usuário recuperados após reinicialização:", retryData);
+                    return retryData;
+                  }
+                } catch (retryErr) {
+                  console.error("Falha na segunda tentativa:", retryErr);
+                }
+              }
+            }
+            
             throw userError;
           }
           
@@ -537,7 +617,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                    userError ? `Erro: ${userError.message}` : 'Sem erros');
           
         if (userError) {
-          throw userError; // Usar o tratamento de erro abaixo
+          // Verificar se é um erro de API key e tentar corrigir
+          if (userError.message === 'No API key found in request' || userError.message?.includes('API key')) {
+            console.log("Detectado erro de API key durante login, tentando reinicializar cliente Supabase...");
+            const reset = await resetSupabaseClient();
+            
+            if (reset) {
+              // Se conseguiu reinicializar, tentar buscar os dados novamente
+              console.log("Cliente reinicializado, buscando dados do usuário novamente durante login...");
+              try {
+                const { data: retryData, error: retryError } = await supabase
+                  .from('users')
+                  .select('*')
+                  .eq('id', userData.id)
+                  .eq('status', 'active')
+                  .single();
+                
+                if (!retryError && retryData) {
+                  console.log("Dados do usuário recuperados após reinicialização durante login:", retryData);
+                  return {
+                    ...retryData,
+                    isAdmin: retryData.role === 'admin'
+                  };
+                }
+              } catch (retryErr) {
+                console.error("Falha na segunda tentativa durante login:", retryErr);
+              }
+            }
+          }
+          
+          throw userError;
         }
         
         if (!userData) {
