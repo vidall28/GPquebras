@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User } from '@/lib/supabase';
+import { supabase, User, ADMIN_EMAILS } from '@/lib/supabase';
 
 // Define auth context interface
 interface AuthContextType {
@@ -46,7 +46,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           // MODIFICAÇÃO: Adicionar timeout para evitar ficar preso na busca de dados
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário na verificação da sessão')), 5000)
+            setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário na verificação da sessão')), 12000)
           );
           
           try {
@@ -111,38 +111,108 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             console.error('Erro ou timeout ao buscar dados do usuário:', userFetchError);
             console.log('Aplicando solução de contingência para manter a sessão ativa');
             
-            // Obter dados básicos do usuário diretamente do Auth
-            const { data: authUser } = await supabase.auth.getUser();
+            // Verificar se já estamos tentando criar um usuário de contingência
+            const isContingencyInProgress = localStorage.getItem('auth_contingency_in_progress');
             
-            if (authUser?.user) {
-              // Criar usuário mínimo com os dados disponíveis
-              const fallbackUser: User = {
-                id: session.user.id,
-                name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'Usuário',
-                registration: authUser.user.user_metadata?.registration || '00000000',
-                email: authUser.user.email || '',
-                role: 'user', // Assume role padrão
-                status: 'active'
-              };
-              
-              console.log('Definindo usuário de contingência:', fallbackUser);
-              setUser(fallbackUser);
-              
-              // Tentar corrigir os dados do usuário em background
-              supabase.rpc('fix_user_data', {
-                user_id: fallbackUser.id,
-                user_name: fallbackUser.name,
-                user_registration: fallbackUser.registration,
-                user_email: fallbackUser.email
-              }).then(({error}) => {
-                if (error) {
-                  console.error('Erro ao corrigir dados do usuário em background:', error);
-                } else {
-                  console.log('Dados do usuário corrigidos em background');
-                }
-              });
+            if (isContingencyInProgress) {
+              console.log('Processo de contingência já em andamento, evitando duplicação');
             } else {
-              console.error('Falha na solução de contingência: não foi possível obter dados do usuário');
+              // Marcar que estamos em processo de contingência
+              localStorage.setItem('auth_contingency_in_progress', 'true');
+              
+              // Verificar se o usuário é administrador através do RPC
+              let adminStatusFromDb = false;
+              try {
+                const { data: adminCheck } = await supabase.rpc('check_if_admin', {
+                  user_id: session.user.id 
+                });
+                if (adminCheck === true) {
+                  adminStatusFromDb = true;
+                  console.log("Confirmação de admin obtida via procedimento RPC");
+                }
+              } catch (rpcError) {
+                console.error("Erro ao verificar status de admin via RPC:", rpcError);
+              }
+              
+              // Obter dados básicos do usuário diretamente do Auth
+              const { data: authUser } = await supabase.auth.getUser();
+              
+              if (authUser?.user) {
+                // Verificar metadados para administrador
+                const userMetadata = authUser.user.user_metadata || {};
+                const isAdminInMetadata = userMetadata.role === 'admin';
+                
+                // Verificar email para administrador
+                const adminEmails = ADMIN_EMAILS || ['admin@example.com']; // Usa ADMIN_EMAILS do supabase.ts
+                const isAdminByEmail = adminEmails.includes(authUser.user.email || '');
+                
+                // Determinar se é admin com base em todas as verificações
+                const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
+                
+                // Criar usuário mínimo com os dados disponíveis
+                const fallbackUser: User = {
+                  id: session.user.id,
+                  name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'Usuário',
+                  registration: authUser.user.user_metadata?.registration || '00000000',
+                  email: authUser.user.email || '',
+                  role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação 
+                  status: 'active'
+                };
+                
+                console.log('Definindo usuário de contingência:', fallbackUser);
+                setUser(fallbackUser);
+                
+                // Tenta inserir ou atualizar o usuário na tabela users
+                try {
+                  console.log("Tentando criar/atualizar registro na tabela users para usuário de contingência");
+                  
+                  // Verificar se o usuário já existe
+                  const { data: existingUser } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('id', fallbackUser.id)
+                    .single();
+                    
+                  if (existingUser) {
+                    // Atualizar usuário existente
+                    await supabase
+                      .from('users')
+                      .update({
+                        name: fallbackUser.name,
+                        email: fallbackUser.email,
+                        role: fallbackUser.role,
+                        status: 'active'
+                      })
+                      .eq('id', fallbackUser.id);
+                      
+                    console.log("Registro de usuário atualizado na tabela users");
+                  } else {
+                    // Inserir novo usuário
+                    await supabase
+                      .from('users')
+                      .insert([{
+                        id: fallbackUser.id,
+                        name: fallbackUser.name,
+                        registration: fallbackUser.registration,
+                        email: fallbackUser.email,
+                        role: fallbackUser.role,
+                        status: 'active'
+                      }]);
+                      
+                    console.log("Novo registro de usuário criado na tabela users");
+                  }
+                } catch (dbError) {
+                  console.error("Erro ao criar/atualizar usuário na tabela:", dbError);
+                }
+              } else {
+                console.error('Falha na solução de contingência: não foi possível obter dados do usuário');
+              }
+              
+              // Remover flag de contingência em andamento após 3 segundos
+              setTimeout(() => {
+                localStorage.removeItem('auth_contingency_in_progress');
+                console.log("Flag de contingência removida");
+              }, 3000);
             }
           }
         } else {
@@ -152,6 +222,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.error('Erro ao verificar sessão:', error);
       } finally {
         setIsLoading(false);
+        // Remover qualquer flag de contingência remanescente
+        localStorage.removeItem('auth_contingency_in_progress');
       }
     };
     
@@ -166,7 +238,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         
         // MODIFICAÇÃO: Aumentar timeout para evitar ficar preso na busca dos dados
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário no evento de autenticação')), 10000)
+          setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário no evento de autenticação')), 15000)
         );
         
         try {
@@ -231,97 +303,155 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error('Erro ou timeout ao buscar dados do usuário no evento:', userFetchError);
           console.log('Aplicando solução de contingência para o evento de autenticação');
           
-          // Buscar informações adicionais diretamente da sessão e autenticação
-          try {
-            console.log("Tentando buscar dados do usuário direto da sessão e autenticação");
+          // Verificar se já estamos tentando criar um usuário de contingência
+          const isContingencyInProgress = localStorage.getItem('auth_contingency_in_progress');
+          
+          if (isContingencyInProgress) {
+            console.log('Processo de contingência já em andamento, evitando duplicação');
+          } else {
+            // Marcar que estamos em processo de contingência
+            localStorage.setItem('auth_contingency_in_progress', 'true');
             
-            // 1. Tentar obter informações dos metadados do usuário na sessão
-            const userMetadata = session.user.user_metadata || {};
-            console.log("Metadados do usuário na sessão:", userMetadata);
-            
-            // 2. Buscar informações adicionais da API de autenticação
-            const { data: authData } = await supabase.auth.getUser();
-            console.log("Dados de autenticação obtidos:", authData?.user?.user_metadata);
-            
-            // 3. Verificar se há alguma indicação de papel de administrador nos metadados
-            // Isso pode variar de acordo com como sua aplicação armazena essas informações
-            const isAdminInMetadata = 
-              (userMetadata.role === 'admin') || 
-              (authData?.user?.user_metadata?.role === 'admin');
-            
-            console.log("Encontrou indicação de administrador nos metadados?", isAdminInMetadata);
-            
-            // 4. Como última tentativa, verificar o email do usuário
-            // Geralmente há um padrão de emails para administradores que podemos usar
-            const adminEmails = ['admin@example.com']; // Adicione emails de administradores conhecidos
-            const isAdminByEmail = adminEmails.includes(session.user.email || '');
-            
-            // 5. Verificar carimbo de administrador em outros sistemas
-            // Tentativa direta via SQL para verificar status de admin (sem usar os níveis de abstração)
-            let adminStatusFromDb = false;
+            // Buscar informações adicionais diretamente da sessão e autenticação
             try {
-              const { data: adminCheck } = await supabase.rpc('check_if_admin', {
-                user_id: session.user.id 
-              });
-              if (adminCheck === true) {
-                adminStatusFromDb = true;
-                console.log("Confirmação de admin obtida via procedimento RPC");
+              console.log("Tentando buscar dados do usuário direto da sessão e autenticação");
+              
+              // 1. Tentar obter informações dos metadados do usuário na sessão
+              const userMetadata = session.user.user_metadata || {};
+              console.log("Metadados do usuário na sessão:", userMetadata);
+              
+              // 2. Buscar informações adicionais da API de autenticação
+              const { data: authData } = await supabase.auth.getUser();
+              console.log("Dados de autenticação obtidos:", authData?.user?.user_metadata);
+              
+              // 3. Verificar se há alguma indicação de papel de administrador nos metadados
+              // Isso pode variar de acordo com como sua aplicação armazena essas informações
+              const isAdminInMetadata = 
+                (userMetadata.role === 'admin') || 
+                (authData?.user?.user_metadata?.role === 'admin');
+              
+              console.log("Encontrou indicação de administrador nos metadados?", isAdminInMetadata);
+              
+              // 4. Como última tentativa, verificar o email do usuário
+              // Geralmente há um padrão de emails para administradores que podemos usar
+              const adminEmails = ADMIN_EMAILS || ['admin@example.com']; // Usa ADMIN_EMAILS do supabase.ts
+              const isAdminByEmail = adminEmails.includes(session.user.email || '');
+              
+              // 5. Verificar carimbo de administrador em outros sistemas
+              // Tentativa direta via SQL para verificar status de admin (sem usar os níveis de abstração)
+              let adminStatusFromDb = false;
+              try {
+                const { data: adminCheck } = await supabase.rpc('check_if_admin', {
+                  user_id: session.user.id 
+                });
+                if (adminCheck === true) {
+                  adminStatusFromDb = true;
+                  console.log("Confirmação de admin obtida via procedimento RPC");
+                }
+              } catch (rpcError) {
+                console.error("Erro ao verificar status de admin via RPC:", rpcError);
               }
-            } catch (rpcError) {
-              console.error("Erro ao verificar status de admin via RPC:", rpcError);
+              
+              // 6. Determinar se o usuário é admin baseado em todas as verificações
+              const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
+              console.log("Decisão final sobre status de admin:", shouldBeAdmin);
+              
+              // 7. Tenta inserir ou atualizar o usuário na tabela users
+              try {
+                // Criar usuário mínimo com os dados disponíveis
+                const fallbackUser: User = {
+                  id: session.user.id,
+                  name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Usuário',
+                  registration: session.user.user_metadata?.registration || '00000000',
+                  email: session.user.email || '',
+                  role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
+                  status: 'active'
+                };
+                
+                console.log("Tentando criar/atualizar registro na tabela users para usuário de contingência");
+                
+                // Verificar se o usuário já existe
+                const { data: existingUser } = await supabase
+                  .from('users')
+                  .select('id')
+                  .eq('id', fallbackUser.id)
+                  .single();
+                  
+                if (existingUser) {
+                  // Atualizar usuário existente
+                  await supabase
+                    .from('users')
+                    .update({
+                      name: fallbackUser.name,
+                      email: fallbackUser.email,
+                      role: fallbackUser.role,
+                      status: 'active'
+                    })
+                    .eq('id', fallbackUser.id);
+                    
+                  console.log("Registro de usuário atualizado na tabela users");
+                } else {
+                  // Inserir novo usuário
+                  await supabase
+                    .from('users')
+                    .insert([{
+                      id: fallbackUser.id,
+                      name: fallbackUser.name,
+                      registration: fallbackUser.registration,
+                      email: fallbackUser.email,
+                      role: fallbackUser.role,
+                      status: 'active'
+                    }]);
+                    
+                  console.log("Novo registro de usuário criado na tabela users");
+                }
+                
+                console.log('Definindo usuário de contingência a partir do evento:', fallbackUser);
+                setUser(fallbackUser);
+              } catch (dbError) {
+                console.error("Erro ao criar/atualizar usuário na tabela:", dbError);
+                
+                // Mesmo com erro, garantir um fallback mínimo
+                const minimalFallback: User = {
+                  id: session.user.id,
+                  name: session.user.email?.split('@')[0] || 'Usuário',
+                  registration: '00000000',
+                  email: session.user.email || '',
+                  role: shouldBeAdmin ? 'admin' : 'user',
+                  status: 'active'
+                };
+                
+                console.log('Definindo usuário com fallback mínimo:', minimalFallback);
+                setUser(minimalFallback);
+              }
+            } catch (contingencyError) {
+              console.error("Erro na solução de contingência:", contingencyError);
+              
+              // Mesmo com erro, garantir um fallback mínimo
+              const minimalFallback: User = {
+                id: session.user.id,
+                name: session.user.email?.split('@')[0] || 'Usuário',
+                registration: '00000000',
+                email: session.user.email || '',
+                role: 'user',
+                status: 'active'
+              };
+              
+              console.log('Definindo usuário com fallback mínimo:', minimalFallback);
+              setUser(minimalFallback);
             }
             
-            // 6. Determinar se o usuário é admin baseado em todas as verificações
-            const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
-            console.log("Decisão final sobre status de admin:", shouldBeAdmin);
-            
-            // Criar usuário mínimo com os dados disponíveis
-            const fallbackUser: User = {
-              id: session.user.id,
-              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Usuário',
-              registration: session.user.user_metadata?.registration || '00000000',
-              email: session.user.email || '',
-              role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
-              status: 'active'
-            };
-            
-            console.log('Definindo usuário de contingência a partir do evento:', fallbackUser);
-            setUser(fallbackUser);
-            
-            // Tentar corrigir os dados do usuário em background
-            supabase.rpc('fix_user_data', {
-              user_id: fallbackUser.id,
-              user_name: fallbackUser.name,
-              user_registration: fallbackUser.registration,
-              user_email: fallbackUser.email,
-              user_role: fallbackUser.role // Incluir a role que determinamos
-            }).then(({error}) => {
-              if (error) {
-                console.error('Erro ao corrigir dados do usuário em background:', error);
-              } else {
-                console.log('Dados do usuário corrigidos em background a partir do evento');
-              }
-            });
-          } catch (contingencyError) {
-            console.error("Erro na solução de contingência:", contingencyError);
-            
-            // Mesmo com erro, garantir um fallback mínimo
-            const minimalFallback: User = {
-              id: session.user.id,
-              name: session.user.email?.split('@')[0] || 'Usuário',
-              registration: '00000000',
-              email: session.user.email || '',
-              role: 'user',
-              status: 'active'
-            };
-            
-            console.log('Definindo usuário com fallback mínimo:', minimalFallback);
-            setUser(minimalFallback);
+            // Remover flag de contingência em andamento após 3 segundos
+            setTimeout(() => {
+              localStorage.removeItem('auth_contingency_in_progress');
+              console.log("Flag de contingência removida");
+            }, 3000);
           }
         }
       } else if (event === 'SIGNED_OUT') {
         console.log("Evento de logout detectado");
         setUser(null);
+        localStorage.removeItem('auth_contingency_in_progress');
       }
     });
     
@@ -329,6 +459,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => {
       console.log("Limpando subscription de autenticação");
       subscription.unsubscribe();
+      localStorage.removeItem('auth_contingency_in_progress');
     };
   }, []);
 
@@ -376,7 +507,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isAdminInMetadata = userMetadata.role === 'admin';
       
       // Lista de emails conhecidos de administradores
-      const adminEmails = ['admin@example.com']; // Substitua pelos emails reais de administradores
+      const adminEmails = ADMIN_EMAILS || ['admin@example.com']; // Usa ADMIN_EMAILS do supabase.ts
       const isAdminByEmail = adminEmails.includes(email);
       
       console.log('Verificação preliminar de administrador:',
@@ -384,8 +515,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                  'Por email:', isAdminByEmail);
       
       // MODIFICAÇÃO: Adicionar um timeout para evitar deadlock no processo de login
+      // Aumentado para 15 segundos para dar mais tempo
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário após login')), 10000)
+        setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário após login')), 15000)
       );
       
       try {
@@ -440,66 +572,112 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (userFetchError) {
         console.error('Erro ao buscar dados do usuário ou timeout:', userFetchError);
         
-        // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA APRIMORADA para login
+        // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA ROBUSTA para login
         console.log('Aplicando solução de contingência para continuar o login');
         
-        // 5. Verificar carimbo de administrador diretamente pelo procedimento RPC
-        let adminStatusFromDb = false;
-        try {
-          const { data: adminCheck } = await supabase.rpc('check_if_admin', {
-            user_id: authData.user.id 
-          });
-          if (adminCheck === true) {
-            adminStatusFromDb = true;
-            console.log("Confirmação de admin obtida via procedimento RPC");
-          }
-        } catch (rpcError) {
-          console.error("Erro ao verificar status de admin via RPC:", rpcError);
-        }
+        // Verificar se já estamos tentando criar um usuário de contingência
+        // para evitar loops no evento SIGNED_IN
+        const isContingencyInProgress = localStorage.getItem('auth_contingency_in_progress');
         
-        // Determinar role com base em todas as verificações
-        const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
-        console.log("Decisão final sobre status de admin:", shouldBeAdmin);
-        
-        const fallbackUser: User = {
-          id: authData.user.id,
-          name: authData.user.user_metadata?.name || authData.user.email?.split('@')[0] || 'Usuário',
-          registration: authData.user.user_metadata?.registration || '00000000',
-          email: authData.user.email || '',
-          role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
-          status: 'active'
-        };
-        
-        console.log('Definindo usuário de contingência:', fallbackUser);
-        setUser(fallbackUser);
-        toast.success('Login realizado com sucesso!');
-        
-        if (shouldBeAdmin) {
-          toast.info('Acesso de administrador restaurado via sistema de contingência');
+        if (isContingencyInProgress) {
+          console.log('Processo de contingência já em andamento, evitando duplicação');
         } else {
-          toast.info('Alguns dados do usuário podem estar incompletos');
-        }
-        
-        // Tentar atualizar os dados do usuário em background
-        supabase.rpc('fix_user_data', {
-          user_id: fallbackUser.id,
-          user_name: fallbackUser.name,
-          user_registration: fallbackUser.registration,
-          user_email: fallbackUser.email,
-          user_role: fallbackUser.role
-        }).then(({error}) => {
-          if (error) {
-            console.error('Erro ao corrigir dados do usuário:', error);
-          } else {
-            console.log('Dados do usuário corrigidos em background');
+          // Marcar que estamos em processo de contingência
+          localStorage.setItem('auth_contingency_in_progress', 'true');
+          
+          // 1. Verificar no RPC se o usuário é administrador
+          let adminStatusFromDb = false;
+          try {
+            console.log("Verificando status de admin via RPC");
+            const { data: adminCheck } = await supabase.rpc('check_if_admin', {
+              user_id: authData.user.id 
+            });
+            if (adminCheck === true) {
+              adminStatusFromDb = true;
+              console.log("Confirmação de admin obtida via procedimento RPC");
+            }
+          } catch (rpcError) {
+            console.error("Erro ao verificar status de admin via RPC:", rpcError);
           }
-        });
-        
-        // MODIFICAÇÃO: Garantir que navegue para o dashboard mesmo no caso de erro
-        window.setTimeout(() => {
-          console.log('Redirecionando para o dashboard após contingência...');
-          navigate('/dashboard');
-        }, 500);
+          
+          // 2. Determinar role com base em todas as verificações
+          const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
+          console.log("Decisão final sobre status de admin:", shouldBeAdmin);
+          
+          // 3. Criar usuário de contingência
+          const fallbackUser: User = {
+            id: authData.user.id,
+            name: authData.user.user_metadata?.name || authData.user.email?.split('@')[0] || 'Usuário',
+            registration: authData.user.user_metadata?.registration || '00000000',
+            email: authData.user.email || '',
+            role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
+            status: 'active'
+          };
+          
+          console.log('Definindo usuário de contingência:', fallbackUser);
+          setUser(fallbackUser);
+          
+          // 4. Tenta inserir ou atualizar o usuário na tabela de usuários
+          try {
+            console.log("Tentando criar/atualizar registro na tabela users para evitar problemas futuros");
+            
+            // Verificar se o usuário já existe
+            const { data: existingUser } = await supabase
+              .from('users')
+              .select('id')
+              .eq('id', fallbackUser.id)
+              .single();
+              
+            if (existingUser) {
+              // Atualizar usuário existente
+              await supabase
+                .from('users')
+                .update({
+                  name: fallbackUser.name,
+                  email: fallbackUser.email,
+                  role: fallbackUser.role,
+                  status: 'active'
+                })
+                .eq('id', fallbackUser.id);
+                
+              console.log("Registro de usuário atualizado na tabela users");
+            } else {
+              // Inserir novo usuário
+              await supabase
+                .from('users')
+                .insert([{
+                  id: fallbackUser.id,
+                  name: fallbackUser.name,
+                  registration: fallbackUser.registration,
+                  email: fallbackUser.email,
+                  role: fallbackUser.role,
+                  status: 'active'
+                }]);
+                
+              console.log("Novo registro de usuário criado na tabela users");
+            }
+          } catch (dbError) {
+            console.error("Erro ao criar/atualizar usuário na tabela:", dbError);
+          }
+          
+          // Remover flag de contingência em andamento após 3 segundos
+          setTimeout(() => {
+            localStorage.removeItem('auth_contingency_in_progress');
+            console.log("Flag de contingência removida");
+          }, 3000);
+          
+          toast.success('Login realizado com sucesso!');
+          
+          if (shouldBeAdmin) {
+            toast.info('Acesso de administrador concedido');
+          }
+          
+          // 5. Navegar para o dashboard após definir o usuário
+          window.setTimeout(() => {
+            console.log('Redirecionando para o dashboard após contingência...');
+            navigate('/dashboard');
+          }, 500);
+        }
       }
       
     } catch (error) {
@@ -507,6 +685,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.error('Erro ao realizar login: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
     } finally {
       setIsLoading(false);
+      // Remover qualquer flag de contingência remanescente
+      localStorage.removeItem('auth_contingency_in_progress');
     }
   };
 
