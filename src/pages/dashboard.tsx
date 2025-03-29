@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -23,10 +22,31 @@ const Dashboard: React.FC = () => {
     <div className="space-y-8 animate-fade-in">
       {/* Page Header */}
       <div className="space-y-2">
-        <h1 className="text-3xl font-bold tracking-tight">Bem-vindo, {user?.name}</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Bem-vindo, {user?.name || 'Usuário'}</h1>
         <p className="text-muted-foreground">
           Gerencie trocas, quebras, produtos e usuários do sistema
         </p>
+      </div>
+      
+      {/* Debug Information - Temporary */}
+      <div className="p-4 border rounded-md bg-muted/20">
+        <h2 className="text-lg font-semibold mb-2">Informações de Depuração</h2>
+        <div className="space-y-1 text-sm">
+          <p><strong>ID do Usuário:</strong> {user?.id || 'Não disponível'}</p>
+          <p><strong>Nome:</strong> {user?.name || 'Não disponível'}</p>
+          <p><strong>Email:</strong> {user?.email || 'Não disponível'}</p>
+          <p><strong>Matrícula:</strong> {user?.registration || 'Não disponível'}</p>
+          <p><strong>Função:</strong> {user?.role || 'Não disponível'}</p>
+          <p><strong>Status:</strong> {user?.status || 'Não disponível'}</p>
+        </div>
+        <div className="mt-4 pt-2 border-t">
+          <p className="text-xs text-muted-foreground">
+            <strong>Nota:</strong> As informações acima mostram os dados do usuário logado.
+            Se a matrícula está aparecendo corretamente aqui, mas não em outro lugar do sistema,
+            pode haver um problema específico nesse componente. Se não estiver aparecendo aqui,
+            o problema pode estar na forma como os dados são armazenados ou recuperados.
+          </p>
+        </div>
       </div>
       
       {/* Feature Cards */}

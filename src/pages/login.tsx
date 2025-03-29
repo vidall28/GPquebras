@@ -6,15 +6,16 @@ import { Input } from '@/components/ui/input';
 import { toast } from '@/lib/toast';
 
 const Login: React.FC = () => {
-  const [registration, setRegistration] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { login, isAuthenticated } = useAuth();
+  const { login, isAuthenticated, resetPassword } = useAuth();
+  const [isResetMode, setIsResetMode] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!registration || !password) {
+    if (!email || (!isResetMode && !password)) {
       toast.error('Preencha todos os campos');
       return;
     }
@@ -22,7 +23,12 @@ const Login: React.FC = () => {
     setIsSubmitting(true);
     
     try {
-      await login(registration, password);
+      if (isResetMode) {
+        await resetPassword(email);
+        setIsResetMode(false);
+      } else {
+        await login(email, password);
+      }
     } catch (error) {
       console.error('Login error:', error);
     } finally {
@@ -46,54 +52,80 @@ const Login: React.FC = () => {
         
         {/* Login Form */}
         <div className="bg-card p-8 rounded-lg shadow-sm border">
-          <h2 className="text-xl font-medium mb-6 text-center">Login</h2>
+          <h2 className="text-xl font-medium mb-6 text-center">
+            {isResetMode ? 'Recuperar Senha' : 'Login'}
+          </h2>
           <p className="text-sm text-center text-muted-foreground mb-6">
-            Entre com suas credenciais para acessar o sistema
+            {isResetMode 
+              ? 'Digite seu email para receber instruções de recuperação de senha' 
+              : 'Entre com suas credenciais para acessar o sistema'}
           </p>
           
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <label htmlFor="registration" className="text-sm font-medium">
-                Matrícula
+              <label htmlFor="email" className="text-sm font-medium">
+                Email
               </label>
               <Input
-                id="registration"
-                type="text"
-                placeholder="Digite sua matrícula (formato: 00000000)"
-                value={registration}
-                onChange={(e) => setRegistration(e.target.value)}
+                id="email"
+                type="email"
+                placeholder="Digite seu email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 required
-                pattern="\d{8}"
-                title="A matrícula deve conter 8 dígitos"
                 className="input-transition"
               />
             </div>
             
-            <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium">
-                Senha
-              </label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Digite sua senha"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="input-transition"
-              />
-            </div>
+            {!isResetMode && (
+              <div className="space-y-2">
+                <label htmlFor="password" className="text-sm font-medium">
+                  Senha
+                </label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Digite sua senha"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="input-transition"
+                />
+              </div>
+            )}
             
             <Button
               type="submit"
               className="w-full"
               disabled={isSubmitting}
             >
-              {isSubmitting ? 'Entrando...' : 'Entrar'}
+              {isSubmitting 
+                ? (isResetMode ? 'Enviando...' : 'Entrando...') 
+                : (isResetMode ? 'Enviar Email de Recuperação' : 'Entrar')}
             </Button>
           </form>
           
-          <div className="mt-6 text-center">
+          <div className="mt-6 text-center space-y-2">
+            <p className="text-sm text-muted-foreground">
+              {isResetMode ? (
+                <button 
+                  type="button" 
+                  onClick={() => setIsResetMode(false)}
+                  className="text-primary hover:underline"
+                >
+                  Voltar ao login
+                </button>
+              ) : (
+                <button 
+                  type="button" 
+                  onClick={() => setIsResetMode(true)}
+                  className="text-primary hover:underline"
+                >
+                  Esqueceu sua senha?
+                </button>
+              )}
+            </p>
+            
             <p className="text-sm text-muted-foreground">
               Não possui uma conta?{' '}
               <Link to="/register" className="text-primary hover:underline">

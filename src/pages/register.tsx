@@ -4,19 +4,22 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/lib/toast';
+import { setupDebugProcedure, debugSupabaseSchema } from '@/lib/debug';
 
 const Register: React.FC = () => {
   const [registration, setRegistration] = useState('');
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [debugMode, setDebugMode] = useState(false);
   const { register, isAuthenticated } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!registration || !name || !password || !confirmPassword) {
+    if (!registration || !name || !email || !password || !confirmPassword) {
       toast.error('Preencha todos os campos');
       return;
     }
@@ -26,14 +29,43 @@ const Register: React.FC = () => {
       return;
     }
     
+    // Validar formato do email
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      toast.error('Formato de email inválido');
+      return;
+    }
+    
     setIsSubmitting(true);
     
     try {
-      await register(registration, name, password, confirmPassword);
+      await register(registration, name, email, password, confirmPassword);
     } catch (error) {
       console.error('Registration error:', error);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+  
+  // Função para executar diagnóstico da estrutura da tabela users
+  const runDiagnostic = async () => {
+    try {
+      // Configurar a stored procedure necessária para diagnóstico
+      await setupDebugProcedure();
+      
+      // Executar o diagnóstico da estrutura do banco de dados
+      const diagnosticResult = await debugSupabaseSchema();
+      
+      // Exibir os resultados no console
+      console.log("Diagnóstico do Supabase:", diagnosticResult);
+      
+      toast.success("Diagnóstico concluído! Verifique o console para detalhes.");
+      
+      // Ativar modo de depuração
+      setDebugMode(true);
+    } catch (error) {
+      console.error("Erro ao executar diagnóstico:", error);
+      toast.error("Falha ao executar diagnóstico");
     }
   };
   
@@ -92,6 +124,26 @@ const Register: React.FC = () => {
             </div>
             
             <div className="space-y-2">
+              <label htmlFor="email" className="text-sm font-medium">
+                Email
+              </label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="Digite seu email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="input-transition"
+              />
+              {debugMode && (
+                <p className="text-xs text-amber-500 mt-1">
+                  Email para diagnóstico: {email}
+                </p>
+              )}
+            </div>
+            
+            <div className="space-y-2">
               <label htmlFor="password" className="text-sm font-medium">
                 Senha
               </label>
@@ -128,13 +180,26 @@ const Register: React.FC = () => {
             >
               {isSubmitting ? 'Registrando...' : 'Registrar'}
             </Button>
+            
+            {/* Botão para executar diagnóstico - visível apenas para desenvolvimento */}
+            <div className="text-center mt-4">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={runDiagnostic}
+                className="text-xs"
+              >
+                Executar Diagnóstico
+              </Button>
+            </div>
           </form>
           
-          <div className="mt-6 text-center">
-            <p className="text-sm text-muted-foreground">
+          <div className="mt-6 text-center text-sm">
+            <p className="text-muted-foreground">
               Já possui uma conta?{' '}
               <Link to="/login" className="text-primary hover:underline">
-                Entrar
+                Faça login
               </Link>
             </p>
           </div>

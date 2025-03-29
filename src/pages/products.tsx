@@ -1,9 +1,9 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '@/context/DataContext';
+import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { 
   Plus, 
@@ -12,25 +12,37 @@ import {
   Box, 
   Search, 
   X,
-  Check
+  Check,
+  Download,
+  Upload,
+  AlertCircle,
+  FileText,
+  RefreshCw
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { CommandInput, CommandList, CommandItem, CommandGroup, Command } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 const Products: React.FC = () => {
-  const { products, addProduct, updateProduct, deleteProduct } = useData();
+  const { products, addProduct, updateProduct, deleteProduct, exportProductsToCSV, importProductsFromCSV, reloadProducts } = useData();
+  const { user, isAdmin } = useAuth();
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<typeof products>([]);
   const [openSearchPopover, setOpenSearchPopover] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [capacity, setCapacity] = useState('');
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  
+  const [importErrors, setImportErrors] = useState<string[]>([]);
+  const [importResult, setImportResult] = useState<{ success: number; errors: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Search functionality
   useEffect(() => {
     if (search.trim() === '') {
@@ -67,8 +79,13 @@ const Products: React.FC = () => {
     setEditingProductId(null);
   };
   
-  const handleAddProduct = (e: React.FormEvent) => {
+  const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!isAdmin) {
+      toast.error('Apenas administradores podem adicionar produtos');
+      return;
+    }
     
     if (!name || !code || !capacity) {
       toast.error('Preencha todos os campos');
@@ -86,18 +103,34 @@ const Products: React.FC = () => {
       return;
     }
     
-    addProduct({
-      name,
-      code,
-      capacity: capacityValue
-    });
-    
-    resetForm();
-    setIsAddDialogOpen(false);
+    try {
+      setIsLoading(true);
+      await addProduct({
+        name,
+        code,
+        capacity: capacityValue
+      });
+      
+      // Recarregar produtos após adicionar
+      console.log('Recarregando produtos após adicionar novo produto');
+      await reloadProducts();
+      
+      resetForm();
+      setIsAddDialogOpen(false);
+    } catch (error) {
+      console.error('Erro ao adicionar produto:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   const handleEditProduct = (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!isAdmin) {
+      toast.error('Apenas administradores podem editar produtos');
+      return;
+    }
     
     if (!editingProductId || !name || !code || !capacity) {
       toast.error('Preencha todos os campos');
@@ -125,7 +158,12 @@ const Products: React.FC = () => {
     setIsEditDialogOpen(false);
   };
   
-  const handleDeleteProduct = (id: string) => {
+  const confirmDeleteProduct = (id: string) => {
+    if (!isAdmin) {
+      toast.error('Apenas administradores podem excluir produtos');
+      return;
+    }
+    
     if (window.confirm('Tem certeza que deseja excluir este produto?')) {
       deleteProduct(id);
     }
@@ -137,6 +175,64 @@ const Products: React.FC = () => {
     setCode(product.code);
     setCapacity(product.capacity.toString());
     setIsEditDialogOpen(true);
+  };
+
+  const handleExportProducts = () => {
+    exportProductsToCSV();
+  };
+  
+  const handleImportProducts = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!isAdmin) {
+      toast.error('Apenas administradores podem importar produtos');
+      return;
+    }
+    
+    if (!fileInputRef.current?.files?.length) {
+      toast.error('Selecione um arquivo para importar');
+      return;
+    }
+    
+    const file = fileInputRef.current.files[0];
+    
+    // Validar tipo de arquivo
+    if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
+      toast.error('O arquivo deve estar no formato CSV');
+      return;
+    }
+    
+    // Ler o arquivo
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const csvData = event.target?.result as string;
+        
+        // Importar produtos
+        const result = await importProductsFromCSV(csvData);
+        
+        setImportResult({
+          success: result.success,
+          errors: result.errors
+        });
+        
+        if (result.errorDetails.length > 0) {
+          setImportErrors(result.errorDetails);
+        } else {
+          setIsImportDialogOpen(false);
+        }
+        
+        // Limpar o input
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      } catch (error) {
+        console.error('Erro ao processar arquivo CSV:', error);
+        toast.error('Erro ao processar arquivo CSV');
+      }
+    };
+    
+    reader.readAsText(file);
   };
 
   const highlightSearchMatch = (text: string) => {
@@ -161,6 +257,20 @@ const Products: React.FC = () => {
     );
   };
 
+  // Função para atualizar a lista de produtos manualmente
+  const handleRefreshProducts = async () => {
+    try {
+      setIsLoading(true);
+      await reloadProducts();
+      toast.success('Lista de produtos atualizada');
+    } catch (error) {
+      console.error('Erro ao atualizar produtos:', error);
+      toast.error('Erro ao atualizar produtos');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -170,61 +280,155 @@ const Products: React.FC = () => {
             Gerenciamento de produtos do sistema
           </p>
         </div>
-        <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-1">
-              <Plus size={16} /> Novo Produto
+        {isAdmin && (
+          <div className="flex flex-wrap gap-2">
+            <Button 
+              variant="outline" 
+              className="gap-1"
+              onClick={handleExportProducts}
+            >
+              <Download size={16} /> Exportar Produtos
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Adicionar Produto</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleAddProduct} className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <label htmlFor="name" className="text-sm font-medium">
-                  Nome
-                </label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Nome do produto"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="code" className="text-sm font-medium">
-                  Código
-                </label>
-                <Input
-                  id="code"
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  placeholder="Código do produto"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="capacity" className="text-sm font-medium">
-                  Capacidade (ml)
-                </label>
-                <Input
-                  id="capacity"
-                  type="number"
-                  value={capacity}
-                  onChange={(e) => setCapacity(e.target.value)}
-                  placeholder="Capacidade em ml"
-                  min="1"
-                  required
-                />
-              </div>
-              <div className="flex justify-end pt-4">
-                <Button type="submit">Adicionar Produto</Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
+            
+            <Dialog open={isImportDialogOpen} onOpenChange={setIsImportDialogOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline" className="gap-1">
+                  <Upload size={16} /> Importar Produtos
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Importar Produtos</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleImportProducts} className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <label htmlFor="csvFile" className="text-sm font-medium">
+                      Arquivo CSV
+                    </label>
+                    <Input
+                      id="csvFile"
+                      type="file"
+                      accept=".csv"
+                      ref={fileInputRef}
+                      required
+                    />
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs text-muted-foreground">
+                        Formato esperado: nome,codigo,capacidade_ml
+                      </p>
+                      <a 
+                        href="/exemplo_produtos/exemplo_produtos.csv" 
+                        download
+                        className="text-xs text-primary hover:underline flex items-center gap-1"
+                      >
+                        <FileText size={12} />
+                        Baixar exemplo
+                      </a>
+                    </div>
+                  </div>
+                  
+                  {importResult && (
+                    <Alert variant={importResult.errors === 0 ? "success" : "warning"}>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertTitle>Resultado da importação</AlertTitle>
+                      <AlertDescription>
+                        <p>Produtos importados com sucesso: {importResult.success}</p>
+                        <p>Erros encontrados: {importResult.errors}</p>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  
+                  {importErrors.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-destructive">Erros encontrados:</p>
+                      <div className="max-h-40 overflow-y-auto bg-muted p-2 rounded text-xs">
+                        {importErrors.map((error, index) => (
+                          <p key={index}>{error}</p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  
+                  <DialogFooter>
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      onClick={() => setIsImportDialogOpen(false)}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button type="submit">Importar</Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+            
+            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="gap-1">
+                  <Plus size={16} /> Novo Produto
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Adicionar Produto</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleAddProduct} className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <label htmlFor="name" className="text-sm font-medium">
+                      Nome
+                    </label>
+                    <Input
+                      id="name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Nome do produto"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="code" className="text-sm font-medium">
+                      Código
+                    </label>
+                    <Input
+                      id="code"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      placeholder="Código do produto"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label htmlFor="capacity" className="text-sm font-medium">
+                      Capacidade (ml)
+                    </label>
+                    <Input
+                      id="capacity"
+                      type="number"
+                      value={capacity}
+                      onChange={(e) => setCapacity(e.target.value)}
+                      placeholder="Capacidade em ml"
+                      min="1"
+                      required
+                    />
+                  </div>
+                  <div className="flex justify-end pt-4">
+                    <Button type="submit">Adicionar Produto</Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+            
+            <Button 
+              variant="outline" 
+              className="gap-1"
+              onClick={handleRefreshProducts}
+              disabled={isLoading}
+            >
+              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} /> Atualizar Lista
+            </Button>
+          </div>
+        )}
       </div>
       
       <div className="flex items-center gap-2 max-w-md">
@@ -267,9 +471,9 @@ const Products: React.FC = () => {
                             <span className="font-medium">{highlightSearchMatch(product.name)}</span>
                             <span className="text-xs text-muted-foreground">{product.code} - {product.capacity}ml</span>
                           </div>
-                          <Button variant="ghost" size="icon" className="h-6 w-6">
+                          <span className="inline-flex h-6 w-6 items-center justify-center text-primary">
                             <Check className="h-3 w-3" />
-                          </Button>
+                          </span>
                         </CommandItem>
                       ))
                     ) : (
@@ -328,22 +532,26 @@ const Products: React.FC = () => {
                     <TableCell>{product.capacity} ml</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => startEditingProduct(product)}
-                          title="Editar"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => handleDeleteProduct(product.id)}
-                          title="Excluir"
-                        >
-                          <Trash className="h-4 w-4" />
-                        </Button>
+                        {isAdmin && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => startEditingProduct(product)}
+                              title="Editar"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() => confirmDeleteProduct(product.id)}
+                              title="Excluir"
+                            >
+                              <Trash className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
@@ -27,7 +26,7 @@ interface UserData {
 
 const Users: React.FC = () => {
   const { isAdmin } = useAuth();
-  const { users: rawUsers, updateUserStatus, updateUserRole } = useData();
+  const { users: rawUsers, updateUserStatus, updateUserRole, deleteUser } = useData();
   
   // Convertemos os users brutos para o formato UserData
   const users: UserData[] = rawUsers.map(user => ({
@@ -75,12 +74,16 @@ const Users: React.FC = () => {
     setIsDeleteDialogOpen(true);
   };
   
-  const deleteUser = () => {
+  const handleDeleteUser = async () => {
     if (userToDelete) {
-      // Implementation will be added later - for now just close the dialog
-      toast.info('Funcionalidade de exclusão será implementada em breve');
-      setIsDeleteDialogOpen(false);
-      setUserToDelete(null);
+      try {
+        await deleteUser(userToDelete);
+        setIsDeleteDialogOpen(false);
+        setUserToDelete(null);
+      } catch (error) {
+        console.error('Erro ao tentar excluir usuário:', error);
+        // O toast de erro já é mostrado na função deleteUser
+      }
     }
   };
 
@@ -125,7 +128,7 @@ const Users: React.FC = () => {
       <DeleteUserDialog 
         isOpen={isDeleteDialogOpen}
         setIsOpen={setIsDeleteDialogOpen}
-        onDelete={deleteUser}
+        onDelete={handleDeleteUser}
       />
     </div>
   );

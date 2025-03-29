@@ -1,14 +1,17 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Twitterbot
-Allow: /
-
-User-agent: facebookexternalhit
-Allow: /
-
+# Allow all crawlers
 User-agent: *
 Allow: /
+
+# Disallow crawling of sensitive routes
+Disallow: /login
+Disallow: /register
+Disallow: /dashboard
+Disallow: /record
+Disallow: /history
+Disallow: /approvals
+Disallow: /products
+Disallow: /users
+Disallow: /reports
+
+# Sitemap (opcional - adicione após criar um sitemap.xml)
+# Sitemap: https://seu-dominio.com/sitemap.xml

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
+import { Product } from '@/context/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -27,13 +28,16 @@ import {
   Eye, 
   Calendar, 
   Download,
-  Image
+  Image,
+  FileSpreadsheet
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { Badge } from '@/components/ui/badge';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import { utils, write } from 'xlsx';
+import { toast } from '@/lib/toast';
 
 const History: React.FC = () => {
   const { user, isAdmin } = useAuth();
@@ -180,12 +184,13 @@ const History: React.FC = () => {
     // Add each image to the zip
     exchange.items.forEach((item, itemIndex) => {
       const product = products.find(p => p.id === item.productId);
-      const productName = product ? product.name.replace(/\s+/g, '_') : 'unknown';
+      const productName = product ? product.name.replace(/\s+/g, '_').toLowerCase() : 'unknown';
       
       item.photos.forEach((photo, photoIndex) => {
         // Convert base64 to blob
         const base64Data = photo.split(',')[1];
-        const fileName = `${productName}_${product?.capacity || 0}ML_${item.quantity}UN_${itemIndex + 1}_${photoIndex + 1}.jpg`;
+        // Novo formato de nome: ita_269ml_15un
+        const fileName = `${productName}_${product?.capacity || 0}ml_${item.quantity}un.jpg`;
         
         images?.file(fileName, base64Data, { base64: true });
       });
@@ -196,6 +201,137 @@ const History: React.FC = () => {
     saveAs(content, `LogiSwap_${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.zip`);
   };
   
+  // Export to Excel function for a single exchange
+  const exportExchangeToExcel = (exchange: typeof exchanges[0], products: Product[]) => {
+    try {
+      // Preparar dados para planilha
+      const rows = exchange.items.map(item => {
+        const product = products.find(p => p.id === item.productId);
+        return {
+          "Produto": product?.name || "Produto não encontrado",
+          "Código": product?.code || "N/A",
+          "Capacidade (ml)": product?.capacity || 0,
+          "Quantidade (un)": item.quantity,
+          "Motivo": item.reason,
+          "Fotos": item.photos.length
+        };
+      });
+
+      // Adicionar informações do registro
+      const additionalInfo = [
+        { "Informação": "Legenda", "Valor": exchange.label },
+        { "Informação": "Tipo", "Valor": exchange.type === 'exchange' ? 'Troca' : 'Quebra' },
+        { "Informação": "Status", "Valor": exchange.status === 'approved' ? 'Aprovado' : (exchange.status === 'rejected' ? 'Rejeitado' : 'Pendente') },
+        { "Informação": "Data", "Valor": new Date(exchange.createdAt).toLocaleDateString('pt-BR') },
+        { "Informação": "Usuário", "Valor": exchange.userName },
+        { "Informação": "Registro", "Valor": exchange.userRegistration },
+        { "Informação": "Observações", "Valor": exchange.notes || "Nenhuma observação" }
+      ];
+
+      // Criar workbook com duas planilhas
+      const wb = utils.book_new();
+      
+      // Planilha de informações gerais
+      const wsInfo = utils.json_to_sheet(additionalInfo);
+      utils.book_append_sheet(wb, wsInfo, "Informações");
+      
+      // Definir a largura das colunas para a planilha de produtos
+      const wsProducts = utils.json_to_sheet(rows);
+      
+      // Ajustar largura das colunas para melhor visualização
+      const wscols = [
+        { wch: 30 }, // Produto
+        { wch: 15 }, // Código
+        { wch: 15 }, // Capacidade
+        { wch: 15 }, // Quantidade
+        { wch: 50 }, // Motivo
+        { wch: 10 }, // Fotos
+      ];
+      
+      wsProducts['!cols'] = wscols;
+      
+      utils.book_append_sheet(wb, wsProducts, "Produtos");
+      
+      // Gerar arquivo
+      const wbout = write(wb, { 
+        bookType: 'xlsx', 
+        type: 'array',
+        bookSST: false,
+        cellStyles: true
+      });
+      
+      // Converter para blob e baixar
+      const blob = new Blob([wbout], { type: 'application/octet-stream' });
+      saveAs(blob, `${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      
+      toast.success('Planilha exportada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast.error('Erro ao exportar planilha. Tente novamente.');
+    }
+  };
+
+  // Função para exportar todos os registros para Excel
+  const exportAllToExcel = () => {
+    try {
+      // Criar workbook
+      const wb = utils.book_new();
+      
+      // Preparar dados para planilha
+      const rows = filteredExchanges.map(exchange => {
+        return {
+          "Legenda": exchange.label,
+          "Tipo": exchange.type === 'exchange' ? 'Troca' : 'Quebra',
+          "Status": exchange.status === 'approved' ? 'Aprovado' : 
+                    exchange.status === 'rejected' ? 'Rejeitado' : 'Pendente',
+          "Data": new Date(exchange.createdAt).toLocaleDateString('pt-BR'),
+          "Usuário": exchange.userName,
+          "Registro": exchange.userRegistration,
+          "Produtos": exchange.items.length,
+          "Total Itens": exchange.items.reduce((acc, item) => acc + item.quantity, 0),
+          "Observações": exchange.notes || ""
+        };
+      });
+
+      // Adicionar planilha ao workbook
+      const ws = utils.json_to_sheet(rows);
+      
+      // Ajustar largura das colunas para melhor visualização
+      const wscols = [
+        { wch: 20 }, // Legenda
+        { wch: 10 }, // Tipo
+        { wch: 10 }, // Status
+        { wch: 12 }, // Data
+        { wch: 20 }, // Usuário
+        { wch: 15 }, // Registro
+        { wch: 10 }, // Produtos
+        { wch: 12 }, // Total Itens
+        { wch: 50 }, // Observações
+      ];
+      
+      ws['!cols'] = wscols;
+      
+      utils.book_append_sheet(wb, ws, "Histórico de Registros");
+      
+      // Gerar arquivo
+      const wbout = write(wb, { 
+        bookType: 'xlsx', 
+        type: 'array',
+        bookSST: false,
+        cellStyles: true
+      });
+      
+      // Converter para blob e baixar
+      const blob = new Blob([wbout], { type: 'application/octet-stream' });
+      saveAs(blob, `historico_registros_${new Date().toISOString().split('T')[0]}.xlsx`);
+      
+      toast.success('Histórico exportado com sucesso!');
+    } catch (error) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast.error('Erro ao exportar planilha. Tente novamente.');
+    }
+  };
+
   // Export to CSV
   const exportToCsv = () => {
     // Create CSV content
@@ -239,9 +375,14 @@ const History: React.FC = () => {
             Visualize e gerencie todos os registros de trocas e quebras
           </p>
         </div>
-        <Button variant="outline" onClick={exportToCsv} className="gap-1">
-          <Download size={16} /> Exportar CSV
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={exportToCsv} className="gap-1">
+            <Download size={16} /> Exportar CSV
+          </Button>
+          <Button variant="outline" onClick={exportAllToExcel} className="gap-1">
+            <FileSpreadsheet size={16} /> Exportar XLSX
+          </Button>
+        </div>
       </div>
       
       {/* Filters */}
@@ -445,6 +586,18 @@ const History: React.FC = () => {
                 )}
               </div>
               
+              {/* Export to Excel button */}
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1"
+                  onClick={() => exportExchangeToExcel(selectedExchange, products)}
+                >
+                  <FileSpreadsheet size={16} /> Exportar para Planilha
+                </Button>
+              </div>
+              
               {/* Items */}
               <div>
                 <h3 className="text-lg font-medium mb-4">Itens do Registro</h3>
@@ -483,14 +636,16 @@ const History: React.FC = () => {
                                 <div className="space-y-2">
                                   <div className="flex items-center justify-between">
                                     <p className="text-sm text-muted-foreground">Fotos</p>
-                                    <Button 
-                                      variant="outline" 
-                                      size="sm" 
-                                      className="h-7 gap-1"
-                                      onClick={() => downloadAllImages(selectedExchange)}
-                                    >
-                                      <Download size={14} /> Baixar todas
-                                    </Button>
+                                    <div className="flex gap-2">
+                                      <Button 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="h-7 gap-1"
+                                        onClick={() => downloadAllImages(selectedExchange)}
+                                      >
+                                        <Download size={14} /> Baixar todas
+                                      </Button>
+                                    </div>
                                   </div>
                                 </div>
                               )}
@@ -511,7 +666,7 @@ const History: React.FC = () => {
                                       className="absolute bottom-1 right-1 bg-black/50 text-white hover:bg-black/70"
                                       onClick={() => {
                                         const product = products.find(p => p.id === item.productId);
-                                        const fileName = `${product?.name.replace(/\s+/g, '_') || 'produto'}_${product?.capacity || 0}ML_${item.quantity}UN_${index + 1}_${photoIndex + 1}.jpg`;
+                                        const fileName = `${product?.name.replace(/\s+/g, '_').toLowerCase() || 'produto'}_${product?.capacity || 0}ml_${item.quantity}un.jpg`;
                                         downloadImage(photo, fileName);
                                       }}
                                     >

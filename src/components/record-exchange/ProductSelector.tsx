@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Search, Check, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -97,17 +96,15 @@ const ProductSelector: React.FC<ProductSelectorProps> = ({
               <div className="flex items-center justify-between w-full gap-2">
                 <span className="truncate">{selectedProduct.name} - {selectedProduct.capacity}ml</span>
                 {selectedProductId && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 rounded-full"
+                  <span
+                    className="inline-flex h-6 w-6 p-0 items-center justify-center rounded-full hover:bg-muted cursor-pointer"
                     onClick={(e) => {
                       e.stopPropagation();
                       clearSelection();
                     }}
                   >
                     <X className="h-3 w-3" />
-                  </Button>
+                  </span>
                 )}
               </div>
             ) : (
@@ -115,7 +112,8 @@ const ProductSelector: React.FC<ProductSelectorProps> = ({
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-full p-0" align="start">
+        
+        <PopoverContent className="p-0 w-[300px]">
           <Command shouldFilter={false}>
             <div className="flex items-center border-b px-3">
               <Search className="h-4 w-4 shrink-0 text-muted-foreground" />

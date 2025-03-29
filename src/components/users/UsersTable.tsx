@@ -1,5 +1,4 @@
-
-import React from 'react';
+import React, { useEffect } from 'react';
 import { 
   Table, 
   TableBody, 
@@ -42,6 +41,15 @@ const UsersTable: React.FC<UsersTableProps> = ({
   toggleSort,
   highlightSearchMatch
 }) => {
+  // Log para debug
+  useEffect(() => {
+    console.log('Usuários carregados na tabela:', filteredUsers.map(user => ({
+      id: user.id,
+      name: user.name,
+      registration: user.registration
+    })));
+  }, [filteredUsers]);
+
   if (users.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center">
@@ -115,60 +123,65 @@ const UsersTable: React.FC<UsersTableProps> = ({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {filteredUsers.map((user) => (
-            <TableRow key={user.id} className={search && (user.name.toLowerCase().includes(search.toLowerCase()) || 
-              user.registration.toLowerCase().includes(search.toLowerCase())) 
-              ? "bg-yellow-50 dark:bg-yellow-900/20" : ""}>
-              <TableCell className="font-medium">{highlightSearchMatch(user.name)}</TableCell>
-              <TableCell>{highlightSearchMatch(user.registration)}</TableCell>
-              <TableCell>
-                <Badge
-                  className={
-                    user.role === 'admin'
-                      ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
-                      : 'bg-slate-100 text-slate-800 hover:bg-slate-100'
-                  }
-                  variant="outline"
-                >
-                  {user.role === 'admin' ? 'Admin' : 'Usuário'}
-                </Badge>
-              </TableCell>
-              <TableCell>
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={user.status === 'active'}
-                    onCheckedChange={() => toggleUserStatus(user.id, user.status)}
-                  />
-                  <span className={user.status === 'active' ? 'text-green-600' : 'text-red-600'}>
-                    {user.status === 'active' ? 'Ativo' : 'Inativo'}
-                  </span>
-                </div>
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => toggleUserRole(user.id, user.role)}
-                    title={user.role === 'admin' ? 'Remover privilégios de administrador' : 'Tornar administrador'}
-                    className={user.role === 'admin' ? 'text-blue-600 hover:text-blue-700' : 'text-slate-600 hover:text-slate-700'}
+          {filteredUsers.map((user) => {
+            // Garantir que a matrícula nunca seja exibida como vazia
+            const displayRegistration = user.registration || 'N/A';
+            
+            return (
+              <TableRow key={user.id} className={search && (user.name.toLowerCase().includes(search.toLowerCase()) || 
+                displayRegistration.toLowerCase().includes(search.toLowerCase())) 
+                ? "bg-yellow-50 dark:bg-yellow-900/20" : ""}>
+                <TableCell className="font-medium">{highlightSearchMatch(user.name)}</TableCell>
+                <TableCell>{highlightSearchMatch(displayRegistration)}</TableCell>
+                <TableCell>
+                  <Badge
+                    className={
+                      user.role === 'admin'
+                        ? 'bg-blue-100 text-blue-800 hover:bg-blue-100'
+                        : 'bg-slate-100 text-slate-800 hover:bg-slate-100'
+                    }
+                    variant="outline"
                   >
-                    {user.role === 'admin' ? <ShieldOff size={16} /> : <ShieldCheck size={16} />}
-                  </Button>
-                  
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-red-600 hover:text-red-700"
-                    onClick={() => confirmDeleteUser(user.id)}
-                    title="Excluir usuário"
-                  >
-                    <X size={16} />
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
+                    {user.role === 'admin' ? 'Admin' : 'Usuário'}
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={user.status === 'active'}
+                      onCheckedChange={() => toggleUserStatus(user.id, user.status)}
+                    />
+                    <span className={user.status === 'active' ? 'text-green-600' : 'text-red-600'}>
+                      {user.status === 'active' ? 'Ativo' : 'Inativo'}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => toggleUserRole(user.id, user.role)}
+                      title={user.role === 'admin' ? 'Remover privilégios de administrador' : 'Tornar administrador'}
+                      className={user.role === 'admin' ? 'text-blue-600 hover:text-blue-700' : 'text-slate-600 hover:text-slate-700'}
+                    >
+                      {user.role === 'admin' ? <ShieldOff size={16} /> : <ShieldCheck size={16} />}
+                    </Button>
+                    
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-red-600 hover:text-red-700"
+                      onClick={() => confirmDeleteUser(user.id)}
+                      title="Excluir usuário"
+                    >
+                      <X size={16} />
+                    </Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>

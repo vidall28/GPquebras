@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -6,12 +5,22 @@ import { Sidebar } from '@/components/Navigation/Sidebar';
 import { LogOut } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { cn } from '@/lib/utils';
+import { NotificationBell } from '@/components/ui/NotificationBell';
+import { ConnectionStatus } from '@/components/ConnectionStatus';
+import { NotificationDropdown } from '@/components/NotificationDropdown';
+import { DataHealthIndicator } from '@/components/DataHealthIndicator';
 
 export const AppLayout: React.FC = () => {
   const { isAuthenticated, user, logout, isAdmin } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [showDataHealth, setShowDataHealth] = useState(false);
   const location = useLocation();
   const isMobile = useIsMobile();
+  
+  // Mostrar o indicador de saúde de dados apenas para administradores
+  useEffect(() => {
+    setShowDataHealth(isAdmin);
+  }, [isAdmin]);
   
   // Close sidebar on mobile by default
   useEffect(() => {
@@ -36,6 +45,9 @@ export const AppLayout: React.FC = () => {
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
+      {/* Status de Conexão */}
+      <ConnectionStatus />
+      
       {/* Sidebar */}
       <div
         className={cn(
@@ -87,13 +99,17 @@ export const AppLayout: React.FC = () => {
             
             {/* Logo - visible only on desktop when sidebar is closed */}
             {!isMobile && !isSidebarOpen && (
-              <h1 className="text-xl font-semibold">LogiSwap</h1>
+              <h1 className="text-xl font-semibold">GP Quebras e Trocas</h1>
             )}
           </div>
           
           {/* User Info */}
           <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">Olá, {user?.name || 'Usuário'}</span>
+            <NotificationDropdown />
+            <div className="flex flex-col justify-center">
+              <span className="text-sm">{user?.name || 'Usuário'}</span>
+              <span className="text-xs text-muted-foreground">Matrícula: {user?.registration || 'N/A'}</span>
+            </div>
             <span className="text-xs font-medium px-2 py-1 bg-primary/10 text-primary rounded-full">
               {isAdmin ? 'Administrador' : 'Usuário'}
             </span>
@@ -114,6 +130,13 @@ export const AppLayout: React.FC = () => {
             <Outlet />
           </div>
         </main>
+        
+        {/* Data Health Indicator (only for admins) */}
+        {showDataHealth && (
+          <div className="fixed bottom-4 right-4 z-50">
+            <DataHealthIndicator />
+          </div>
+        )}
       </div>
     </div>
   );

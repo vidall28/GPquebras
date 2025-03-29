@@ -1,7 +1,7 @@
-
 import React, { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
+import { Product } from '@/context/DataContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -44,7 +44,8 @@ import {
   Calendar, 
   Download,
   Clock,
-  ShieldAlert
+  ShieldAlert,
+  FileSpreadsheet
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -53,6 +54,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from '@/lib/toast';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
+import { utils, write } from 'xlsx';
 import { Navigate } from 'react-router-dom';
 
 const Approvals: React.FC = () => {
@@ -73,7 +75,8 @@ const Approvals: React.FC = () => {
   // Review state
   const [selectedExchange, setSelectedExchange] = useState<typeof exchanges[0] | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [notes, setNotes] = useState('');
+  const [approvalNotes, setApprovalNotes] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false); // Status de carregamento
   
   // Get pending exchanges
   const pendingExchanges = exchanges.filter(exchange => exchange.status === 'pending');
@@ -137,43 +140,85 @@ const Approvals: React.FC = () => {
   // Review exchange
   const reviewExchange = (exchange: typeof exchanges[0]) => {
     setSelectedExchange(exchange);
-    setNotes('');
+    setApprovalNotes('');
     setReviewOpen(true);
   };
   
   // Approve exchange
-  const approveExchange = () => {
+  const approveExchange = async () => {
     if (!selectedExchange) return;
     
-    updateExchange(selectedExchange.id, {
-      status: 'approved',
-      notes: notes || undefined,
-      updatedAt: new Date().toISOString(),
-      updatedBy: user?.name
-    });
+    // Sinaliza o início do processamento
+    setIsProcessing(true);
     
-    setReviewOpen(false);
-    toast.success('Registro aprovado com sucesso!');
+    try {
+      console.log(`Aprovando troca ID: ${selectedExchange.id}`);
+      
+      // Fecha o diálogo imediatamente para melhor UX
+      setReviewOpen(false);
+      
+      // Atualiza o status usando a nova interface da função com parâmetros tipados corretamente
+      await updateExchange(
+        selectedExchange.id, 
+        'approved' as 'pending' | 'approved' | 'rejected', 
+        approvalNotes
+      );
+      
+      // Feedback ao usuário
+      toast.success('Registro aprovado com sucesso!');
+    } catch (error) {
+      console.error('Erro ao aprovar troca:', error);
+      
+      // Mostra erro se houver falha
+      toast.error('Erro ao aprovar registro. Consulte o log para mais detalhes.');
+    } finally {
+      // Limpa os campos e estados
+      setIsProcessing(false);
+      setApprovalNotes('');
+    }
   };
   
   // Reject exchange
-  const rejectExchange = () => {
+  const rejectExchange = async () => {
+    // NOTA IMPORTANTE: Tanto a aprovação quanto a rejeição compartilham o mesmo campo de texto (approvalNotes).
+    // Originalmente havia dois campos separados, mas o formulário só exibe um, causando problemas quando
+    // tentava-se rejeitar uma troca (verificava rejectionNotes que não era preenchido pelo usuário).
     if (!selectedExchange) return;
     
-    if (!notes) {
-      toast.error('Informe o motivo da rejeição');
+    // Verifica se há notas para rejeição
+    if (!approvalNotes || approvalNotes.trim() === '') {
+      toast.error('Por favor, informe o motivo da rejeição.');
       return;
     }
     
-    updateExchange(selectedExchange.id, {
-      status: 'rejected',
-      notes,
-      updatedAt: new Date().toISOString(),
-      updatedBy: user?.name
-    });
+    // Sinaliza o início do processamento
+    setIsProcessing(true);
     
-    setReviewOpen(false);
-    toast.success('Registro rejeitado com sucesso!');
+    try {
+      console.log(`Rejeitando troca ID: ${selectedExchange.id}, Motivo: ${approvalNotes}`);
+      
+      // Fecha o diálogo imediatamente para melhor UX
+      setReviewOpen(false);
+      
+      // Atualiza o status usando a nova interface da função com parâmetros tipados corretamente
+      await updateExchange(
+        selectedExchange.id, 
+        'rejected' as 'pending' | 'approved' | 'rejected', 
+        approvalNotes
+      );
+      
+      // Feedback ao usuário
+      toast.success('Registro rejeitado com sucesso!');
+    } catch (error) {
+      console.error('Erro ao rejeitar troca:', error);
+      
+      // Mostra erro se houver falha
+      toast.error('Erro ao rejeitar registro. Consulte o log para mais detalhes.');
+    } finally {
+      // Limpa os campos e estados
+      setIsProcessing(false);
+      setApprovalNotes('');
+    }
   };
   
   // Helper to get type badge
@@ -220,12 +265,13 @@ const Approvals: React.FC = () => {
     // Add each image to the zip
     exchange.items.forEach((item, itemIndex) => {
       const product = products.find(p => p.id === item.productId);
-      const productName = product ? product.name.replace(/\s+/g, '_') : 'unknown';
+      const productName = product ? product.name.replace(/\s+/g, '_').toLowerCase() : 'unknown';
       
       item.photos.forEach((photo, photoIndex) => {
         // Convert base64 to blob
         const base64Data = photo.split(',')[1];
-        const fileName = `${productName}_${product?.capacity || 0}ML_${item.quantity}UN_${itemIndex + 1}_${photoIndex + 1}.jpg`;
+        // Novo formato de nome: ita_269ml_15un
+        const fileName = `${productName}_${product?.capacity || 0}ml_${item.quantity}un.jpg`;
         
         images?.file(fileName, base64Data, { base64: true });
       });
@@ -234,6 +280,75 @@ const Approvals: React.FC = () => {
     // Generate zip
     const content = await zip.generateAsync({ type: 'blob' });
     saveAs(content, `LogiSwap_${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.zip`);
+  };
+
+  // Export to Excel function
+  const exportToExcel = (exchange: typeof exchanges[0], products: Product[]) => {
+    try {
+      // Preparar dados para planilha
+      const rows = exchange.items.map(item => {
+        const product = products.find(p => p.id === item.productId);
+        return {
+          "Produto": product?.name || "Produto não encontrado",
+          "Código": product?.code || "N/A",
+          "Capacidade (ml)": product?.capacity || 0,
+          "Quantidade (un)": item.quantity,
+          "Motivo": item.reason,
+          "Fotos": item.photos.length
+        };
+      });
+
+      // Adicionar informações do registro
+      const additionalInfo = [
+        { "Informação": "Legenda", "Valor": exchange.label },
+        { "Informação": "Tipo", "Valor": exchange.type === 'exchange' ? 'Troca' : 'Quebra' },
+        { "Informação": "Data", "Valor": new Date(exchange.createdAt).toLocaleDateString('pt-BR') },
+        { "Informação": "Usuário", "Valor": exchange.userName },
+        { "Informação": "Registro", "Valor": exchange.userRegistration },
+        { "Informação": "Observações", "Valor": exchange.notes || "Nenhuma observação" }
+      ];
+
+      // Criar workbook com duas planilhas
+      const wb = utils.book_new();
+      
+      // Planilha de informações gerais
+      const wsInfo = utils.json_to_sheet(additionalInfo);
+      utils.book_append_sheet(wb, wsInfo, "Informações");
+      
+      // Definir a largura das colunas para a planilha de produtos
+      const wsProducts = utils.json_to_sheet(rows);
+      
+      // Ajustar largura das colunas para melhor visualização
+      const wscols = [
+        { wch: 30 }, // Produto
+        { wch: 15 }, // Código
+        { wch: 15 }, // Capacidade
+        { wch: 15 }, // Quantidade
+        { wch: 50 }, // Motivo
+        { wch: 10 }, // Fotos
+      ];
+      
+      wsProducts['!cols'] = wscols;
+      
+      utils.book_append_sheet(wb, wsProducts, "Produtos");
+      
+      // Gerar arquivo
+      const wbout = write(wb, { 
+        bookType: 'xlsx', 
+        type: 'array',
+        bookSST: false,
+        cellStyles: true
+      });
+      
+      // Converter para blob e baixar
+      const blob = new Blob([wbout], { type: 'application/octet-stream' });
+      saveAs(blob, `${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      
+      toast.success('Planilha exportada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao exportar para Excel:', error);
+      toast.error('Erro ao exportar planilha. Tente novamente.');
+    }
   };
 
   return (
@@ -414,6 +529,18 @@ const Approvals: React.FC = () => {
                   )}
                 </div>
                 
+                {/* Button to export to Excel at top of dialog */}
+                <div className="flex justify-end">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => exportToExcel(selectedExchange, products)}
+                  >
+                    <FileSpreadsheet size={16} /> Exportar para Planilha
+                  </Button>
+                </div>
+                
                 {/* Items */}
                 <div>
                   <h3 className="text-lg font-medium mb-4">Itens do Registro</h3>
@@ -452,14 +579,16 @@ const Approvals: React.FC = () => {
                                   <div className="space-y-2">
                                     <div className="flex items-center justify-between">
                                       <p className="text-sm text-muted-foreground">Fotos</p>
-                                      <Button 
-                                        variant="outline" 
-                                        size="sm" 
-                                        className="h-7 gap-1"
-                                        onClick={() => downloadAllImages(selectedExchange)}
-                                      >
-                                        <Download size={14} /> Baixar todas
-                                      </Button>
+                                      <div className="flex gap-2">
+                                        <Button 
+                                          variant="outline" 
+                                          size="sm" 
+                                          className="h-7 gap-1"
+                                          onClick={() => downloadAllImages(selectedExchange)}
+                                        >
+                                          <Download size={14} /> Baixar todas
+                                        </Button>
+                                      </div>
                                     </div>
                                   </div>
                                 )}
@@ -480,7 +609,7 @@ const Approvals: React.FC = () => {
                                         className="absolute bottom-1 right-1 bg-black/50 text-white hover:bg-black/70"
                                         onClick={() => {
                                           const product = products.find(p => p.id === item.productId);
-                                          const fileName = `${product?.name.replace(/\s+/g, '_') || 'produto'}_${product?.capacity || 0}ML_${item.quantity}UN_${index + 1}_${photoIndex + 1}.jpg`;
+                                          const fileName = `${product?.name.replace(/\s+/g, '_').toLowerCase() || 'produto'}_${product?.capacity || 0}ml_${item.quantity}un.jpg`;
                                           downloadImage(photo, fileName);
                                         }}
                                       >
@@ -501,10 +630,13 @@ const Approvals: React.FC = () => {
                 {/* Decision Area */}
                 <div className="space-y-4 pt-4 border-t">
                   <h3 className="text-lg font-medium">Decisão</h3>
+                  <p className="text-sm text-muted-foreground mb-2">
+                    Digite sua observação abaixo. Este campo é <strong>obrigatório</strong> para rejeição e opcional para aprovação.
+                  </p>
                   <Textarea
-                    placeholder="Observações sobre a aprovação ou motivo da rejeição"
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Digite o motivo da rejeição ou observações para aprovação"
+                    value={approvalNotes}
+                    onChange={(e) => setApprovalNotes(e.target.value)}
                     rows={3}
                   />
                 </div>
@@ -516,6 +648,7 @@ const Approvals: React.FC = () => {
             <Button
               variant="outline"
               onClick={() => setReviewOpen(false)}
+              disabled={isProcessing}
             >
               Cancelar
             </Button>
@@ -523,14 +656,34 @@ const Approvals: React.FC = () => {
               variant="destructive"
               onClick={rejectExchange}
               className="gap-1"
+              disabled={isProcessing}
             >
-              <AlertCircle size={16} /> Rejeitar
+              {isProcessing ? (
+                <>
+                  <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-1" />
+                  Processando...
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={16} /> Rejeitar
+                </>
+              )}
             </Button>
             <Button
               onClick={approveExchange}
               className="gap-1"
+              disabled={isProcessing}
             >
-              <Check size={16} /> Aprovar
+              {isProcessing ? (
+                <>
+                  <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-1" />
+                  Processando...
+                </>
+              ) : (
+                <>
+                  <Check size={16} /> Aprovar
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
