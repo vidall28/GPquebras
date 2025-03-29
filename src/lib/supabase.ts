@@ -145,6 +145,80 @@ export const mappers = {
   }),
 };
 
+// Lista de emails administrativos conhecidos
+// Substitua por emails reais dos administradores do sistema
+export const ADMIN_EMAILS = [
+  'admin@example.com',
+  // adicione mais emails aqui
+];
+
+// Função auxiliar para verificar se um usuário é administrador
+// Esta função simula o procedimento RPC 'check_if_admin' enquanto ele não é criado no Supabase
+export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
+  try {
+    console.log("Verificando permissões de administrador para usuário ID:", userId);
+    
+    // 1. Tentar buscar o usuário diretamente
+    const { data: userData, error: userError } = await supabase
+      .from('users')
+      .select('role, email')
+      .eq('id', userId)
+      .single();
+      
+    if (!userError && userData && userData.role === 'admin') {
+      console.log("Usuário encontrado na tabela users com papel de administrador");
+      return true;
+    }
+    
+    if (userData && ADMIN_EMAILS.includes(userData.email)) {
+      console.log("Usuário encontrado na tabela users com email administrativo");
+      return true;
+    }
+    
+    // 2. Verificar via API de autenticação
+    const { data: authData } = await supabase.auth.getUser();
+    if (authData && authData.user) {
+      const userMetadata = authData.user.user_metadata || {};
+      
+      if (userMetadata.role === 'admin') {
+        console.log("Usuário tem papel de administrador nos metadados");
+        return true;
+      }
+      
+      if (ADMIN_EMAILS.includes(authData.user.email || '')) {
+        console.log("Usuário tem email administrativo conhecido");
+        return true;
+      }
+    }
+    
+    console.log("Não foi possível confirmar permissões administrativas pelo sistema auxiliar");
+    return false;
+  } catch (error) {
+    console.error("Erro ao verificar permissões de administrador:", error);
+    return false;
+  }
+};
+
+// Extender a funcionalidade do supabase para incluir um simulador de RPC
+// para o check_if_admin enquanto não criamos o procedimento real
+const originalRpc = supabase.rpc.bind(supabase);
+supabase.rpc = (procedureName: string, params?: any, options?: any) => {
+  if (procedureName === 'check_if_admin' && params?.user_id) {
+    // Simular o procedimento check_if_admin
+    console.log("Simulando procedimento check_if_admin");
+    return new Promise(async (resolve) => {
+      const isAdmin = await checkIfUserIsAdmin(params.user_id);
+      resolve({ 
+        data: isAdmin, 
+        error: null 
+      });
+    }) as Promise<any>;
+  }
+  
+  // Chamar a implementação original para outros procedimentos
+  return originalRpc(procedureName, params, options);
+};
+
 // Interface do Produto
 export interface Product {
   id: string;
