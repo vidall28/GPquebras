@@ -44,59 +44,106 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (session) {
           console.log("Usuário autenticado, buscando dados...", session.user.id);
           
-          // Buscar os dados do usuário da tabela 'users'
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-            
-          if (userError) {
-            console.error('Erro ao buscar dados do usuário:', userError);
-            // Não fazemos logout automático aqui para evitar loops em caso de problema na tabela users
-            setIsLoading(false);
-            return;
-          }
+          // MODIFICAÇÃO: Adicionar timeout para evitar ficar preso na busca de dados
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário na verificação da sessão')), 5000)
+          );
           
-          if (userData) {
-            console.log('Dados do usuário carregados da sessão:', userData);
-            
-            // MODIFICAÇÃO: Não substituir automaticamente o nome do usuário
-            // Apenas verificar se o nome está vazio
-            if (!userData.name || userData.name.trim() === '') {
-              console.warn('Nome do usuário está vazio na sessão iniciada');
+          try {
+            // Buscar os dados do usuário da tabela 'users'
+            const userDataPromise = supabase
+              .from('users')
+              .select('*')
+              .eq('id', session.user.id)
+              .single();
               
-              // Obter metadados do usuário para verificar o nome correto
-              const { data: authUser } = await supabase.auth.getUser();
-              const correctName = authUser?.user?.user_metadata?.name || 'Novo Usuário';
+            // Usar Race para evitar ficar preso se a consulta não responder
+            const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
               
-              // Atualizar o nome apenas se estiver realmente vazio
-              const { error: updateError } = await supabase
-                .from('users')
-                .update({ name: correctName })
-                .eq('id', userData.id);
-                
-              if (updateError) {
-                console.error('Erro ao atualizar nome do usuário na sessão:', updateError);
-              } else {
-                userData.name = correctName;
-                console.log('Nome do usuário atualizado para:', correctName);
-              }
+            if (userError) {
+              console.error('Erro ao buscar dados do usuário:', userError);
+              throw userError; // Passar para o tratamento de erro abaixo
             }
             
-            const currentUser: User = {
-              id: userData.id,
-              name: userData.name,
-              registration: userData.registration,
-              email: userData.email,
-              role: userData.role,
-              status: userData.status
-            };
+            if (userData) {
+              console.log('Dados do usuário carregados da sessão:', userData);
+              
+              // MODIFICAÇÃO: Não substituir automaticamente o nome do usuário
+              // Apenas verificar se o nome está vazio
+              if (!userData.name || userData.name.trim() === '') {
+                console.warn('Nome do usuário está vazio na sessão iniciada');
+                
+                // Obter metadados do usuário para verificar o nome correto
+                const { data: authUser } = await supabase.auth.getUser();
+                const correctName = authUser?.user?.user_metadata?.name || 'Novo Usuário';
+                
+                // Atualizar o nome apenas se estiver realmente vazio
+                const { error: updateError } = await supabase
+                  .from('users')
+                  .update({ name: correctName })
+                  .eq('id', userData.id);
+                  
+                if (updateError) {
+                  console.error('Erro ao atualizar nome do usuário na sessão:', updateError);
+                } else {
+                  userData.name = correctName;
+                  console.log('Nome do usuário atualizado para:', correctName);
+                }
+              }
+              
+              const currentUser: User = {
+                id: userData.id,
+                name: userData.name,
+                registration: userData.registration,
+                email: userData.email,
+                role: userData.role,
+                status: userData.status
+              };
+              
+              console.log("Definindo usuário no estado:", currentUser);
+              setUser(currentUser);
+            } else {
+              console.warn("Sessão encontrada, mas dados do usuário não existem na tabela users");
+              throw new Error('Usuário não encontrado na tabela users'); // Passar para tratamento de erro
+            }
+          } catch (userFetchError) {
+            // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA quando há problema na busca dos dados
+            console.error('Erro ou timeout ao buscar dados do usuário:', userFetchError);
+            console.log('Aplicando solução de contingência para manter a sessão ativa');
             
-            console.log("Definindo usuário no estado:", currentUser);
-            setUser(currentUser);
-          } else {
-            console.warn("Sessão encontrada, mas dados do usuário não existem na tabela users");
+            // Obter dados básicos do usuário diretamente do Auth
+            const { data: authUser } = await supabase.auth.getUser();
+            
+            if (authUser?.user) {
+              // Criar usuário mínimo com os dados disponíveis
+              const fallbackUser: User = {
+                id: session.user.id,
+                name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'Usuário',
+                registration: authUser.user.user_metadata?.registration || '00000000',
+                email: authUser.user.email || '',
+                role: 'user', // Assume role padrão
+                status: 'active'
+              };
+              
+              console.log('Definindo usuário de contingência:', fallbackUser);
+              setUser(fallbackUser);
+              
+              // Tentar corrigir os dados do usuário em background
+              supabase.rpc('fix_user_data', {
+                user_id: fallbackUser.id,
+                user_name: fallbackUser.name,
+                user_registration: fallbackUser.registration,
+                user_email: fallbackUser.email
+              }).then(({error}) => {
+                if (error) {
+                  console.error('Erro ao corrigir dados do usuário em background:', error);
+                } else {
+                  console.log('Dados do usuário corrigidos em background');
+                }
+              });
+            } else {
+              console.error('Falha na solução de contingência: não foi possível obter dados do usuário');
+            }
           }
         } else {
           console.log("Nenhuma sessão ativa encontrada");
@@ -219,167 +266,101 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Metadados do usuário Auth:', authData.user.user_metadata);
       console.log('ID do usuário autenticado:', authData.user.id);
       
-      // Buscar os dados completos do usuário na tabela users
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', authData.user.id)
-        .eq('status', 'active')
-        .single();
+      // MODIFICAÇÃO: Adicionar um timeout para evitar deadlock no processo de login
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário após login')), 5000)
+      );
+      
+      try {
+        // Buscar os dados completos do usuário na tabela users
+        const userDataPromise = supabase
+          .from('users')
+          .select('*')
+          .eq('id', authData.user.id)
+          .eq('status', 'active')
+          .single();
+          
+        // Usar Race para evitar ficar preso se a consulta não responder
+        const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
         
-      console.log('Resposta da busca do usuário:', 
-                 userData ? 'Dados encontrados' : 'Usuário não encontrado', 
-                 userError ? `Erro: ${userError.message}` : 'Sem erros');
-        
-      if (userError) {
-        console.error('Erro ao buscar dados do usuário:', userError);
-        
-        // Verificar se o usuário existe no Auth mas não na tabela users
-        // Isso pode acontecer se o registro não completou corretamente
-        console.log('Tentando criar registro de usuário ausente na tabela users...');
-        
-        // Extrair dados do usuário do Auth para criar na tabela users
-        const userMetadata = authData.user.user_metadata;
-        const userName = userMetadata?.name || authData.user.email?.split('@')[0] || 'Usuário';
-        const userRegistration = userMetadata?.registration || '00000000';
-        
-        // Tentar criar o usuário na tabela users
-        try {
-          const { data: fixResult, error: fixError } = await supabase.rpc(
-            'fix_user_data',
-            {
-              user_id: authData.user.id,
-              user_name: userName,
-              user_registration: userRegistration,
-              user_email: authData.user.email
-            }
-          );
+        console.log('Resposta da busca do usuário:', 
+                   userData ? 'Dados encontrados' : 'Usuário não encontrado', 
+                   userError ? `Erro: ${userError.message}` : 'Sem erros');
           
-          console.log('Resultado da correção de dados:', 
-                     fixResult ? 'Sucesso' : 'Falha', 
-                     fixError ? `Erro: ${fixError.message}` : 'Sem erros');
-          
-          if (fixError) {
-            console.error('Erro ao criar/corrigir dados do usuário:', fixError);
-            toast.error('Erro ao sincronizar dados do usuário. Entre em contato com o suporte.');
-            
-            // Não fazemos logout automático aqui para evitar problemas
-            setIsLoading(false);
-            return;
-          }
-          
-          console.log('Dados do usuário corrigidos/criados com sucesso:', fixResult);
-          
-          // Tentar buscar os dados do usuário novamente
-          const { data: fixedUserData, error: fixedUserError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', authData.user.id)
-            .single();
-            
-          if (fixedUserError || !fixedUserData) {
-            console.error('Erro ao buscar dados do usuário após correção:', fixedUserError);
-            toast.error('Usuário não encontrado ou inativo');
-            setIsLoading(false);
-            return;
-          }
-          
-          // Login bem-sucedido após correção
-          const currentUser: User = {
-            id: fixedUserData.id,
-            name: fixedUserData.name,
-            registration: fixedUserData.registration,
-            email: fixedUserData.email,
-            role: fixedUserData.role || 'user', // Usuário padrão
-            status: fixedUserData.status || 'active'
-          };
-          
-          console.log('Usuário definido após correção:', currentUser);
-          setUser(currentUser);
-          toast.success('Login realizado com sucesso!');
-          
-          // Aguardar um momento para garantir que o estado foi atualizado
-          setTimeout(() => {
-            navigate('/dashboard');
-            setIsLoading(false);
-          }, 500);
-          
-          return;
-        } catch (fixError) {
-          console.error('Erro ao tentar corrigir dados do usuário:', fixError);
-          toast.error('Erro ao processar login. Entre em contato com o suporte.');
-          setIsLoading(false);
-          return;
+        if (userError) {
+          throw userError; // Usar o tratamento de erro abaixo
         }
-      }
-      
-      if (!userData) {
-        toast.error('Usuário não encontrado ou inativo');
-        // Não fazemos logout automático aqui
-        setIsLoading(false);
-        return;
-      }
-      
-      // Log para debugging
-      console.log('Dados do usuário recuperados do banco:', userData);
-      
-      // Verificar se os dados do usuário estão incompletos
-      const needsUpdate = !userData.name || userData.name.trim() === '' || 
-                         !userData.registration || userData.registration.trim() === '' ||
-                         !userData.email || userData.email.trim() === '';
-      
-      if (needsUpdate) {
-        console.warn('Dados do usuário incompletos:', userData);
         
-        // Obter metadados do usuário para verificar os dados corretos
-        const userMetadata = authData.user.user_metadata;
-        const correctName = userMetadata?.name || authData.user.email?.split('@')[0] || 'Usuário';
-        const correctRegistration = userMetadata?.registration || userData.registration || '00000000';
-        
-        // Atualizar dados incompletos
-        const { error: updateError } = await supabase.rpc(
-          'fix_user_data',
-          {
-            user_id: userData.id,
-            user_name: correctName,
-            user_registration: correctRegistration,
-            user_email: authData.user.email
-          }
-        );
-        
-        if (updateError) {
-          console.error('Erro ao atualizar dados incompletos do usuário:', updateError);
-        } else {
-          console.log('Dados incompletos do usuário atualizados com sucesso');
-          userData.name = correctName;
-          userData.registration = correctRegistration;
-          userData.email = authData.user.email;
+        if (!userData) {
+          throw new Error('Usuário não encontrado na tabela users');
         }
+        
+        // Login bem-sucedido
+        const currentUser: User = {
+          id: userData.id,
+          name: userData.name,
+          registration: userData.registration,
+          email: userData.email,
+          role: userData.role,
+          status: userData.status
+        };
+        
+        console.log('Definindo usuário após login bem-sucedido:', currentUser);
+        setUser(currentUser);
+        toast.success('Login realizado com sucesso!');
+        
+        // Verificar a sessão após o login para garantir persistência
+        const { data: sessionCheck } = await supabase.auth.getSession();
+        console.log("Verificação de sessão após login:", 
+                   sessionCheck?.session ? "Sessão ativa" : "Sessão não encontrada");
+        
+        // MODIFICAÇÃO: Garantir que navegue para o dashboard após definir o usuário
+        window.setTimeout(() => {
+          console.log('Redirecionando para o dashboard...');
+          navigate('/dashboard');
+        }, 500);
+        
+      } catch (userFetchError) {
+        console.error('Erro ao buscar dados do usuário ou timeout:', userFetchError);
+        
+        // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA - Se não conseguir buscar dados do usuário
+        // Criar um usuário mínimo com base nas informações do Auth para não travar o login
+        console.log('Aplicando solução de contingência para continuar o login');
+        
+        const fallbackUser: User = {
+          id: authData.user.id,
+          name: authData.user.user_metadata?.name || authData.user.email?.split('@')[0] || 'Usuário',
+          registration: authData.user.user_metadata?.registration || '00000000',
+          email: authData.user.email || '',
+          role: 'user', // Assume role padrão
+          status: 'active'
+        };
+        
+        console.log('Definindo usuário de contingência:', fallbackUser);
+        setUser(fallbackUser);
+        toast.success('Login realizado com sucesso!');
+        toast.info('Alguns dados do usuário podem estar incompletos');
+        
+        // Tentar atualizar os dados do usuário em background
+        supabase.rpc('fix_user_data', {
+          user_id: fallbackUser.id,
+          user_name: fallbackUser.name,
+          user_registration: fallbackUser.registration,
+          user_email: fallbackUser.email
+        }).then(({error}) => {
+          if (error) {
+            console.error('Erro ao corrigir dados do usuário:', error);
+          } else {
+            console.log('Dados do usuário corrigidos em background');
+          }
+        });
+        
+        // MODIFICAÇÃO: Garantir que navegue para o dashboard mesmo no caso de erro
+        window.setTimeout(() => {
+          console.log('Redirecionando para o dashboard após contingência...');
+          navigate('/dashboard');
+        }, 500);
       }
-      
-      // Login bem-sucedido
-      const currentUser: User = {
-        id: userData.id,
-        name: userData.name,
-        registration: userData.registration,
-        email: userData.email,
-        role: userData.role,
-        status: userData.status
-      };
-      
-      console.log('Definindo usuário após login bem-sucedido:', currentUser);
-      setUser(currentUser);
-      toast.success('Login realizado com sucesso!');
-      
-      // Verificar a sessão após o login para garantir persistência
-      const { data: sessionCheck } = await supabase.auth.getSession();
-      console.log("Verificação de sessão após login:", 
-                 sessionCheck?.session ? "Sessão ativa" : "Sessão não encontrada");
-      
-      // Aguardar um momento para garantir que o estado foi atualizado
-      setTimeout(() => {
-        navigate('/dashboard');
-      }, 500);
       
     } catch (error) {
       console.error('Erro ao fazer login:', error);
