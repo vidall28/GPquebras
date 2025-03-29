@@ -164,55 +164,99 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (event === 'SIGNED_IN' && session) {
         console.log("Usuário autenticado, ID:", session.user.id);
         
-        // Buscar os dados do usuário
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-          
-        if (userError) {
-          console.error('Erro ao buscar dados do usuário no evento de autenticação:', userError);
-          return;
-        }
+        // MODIFICAÇÃO: Adicionar timeout para evitar ficar preso na busca dos dados
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário no evento de autenticação')), 5000)
+        );
         
-        if (userData) {
-          console.log('Dados do usuário carregados do evento de autenticação:', userData);
-          
-          // MODIFICAÇÃO: Não substituir automaticamente o nome do usuário
-          // Apenas verificar se o nome está vazio
-          if (!userData.name || userData.name.trim() === '') {
-            console.warn('Nome do usuário está vazio no evento de autenticação');
+        try {
+          // Buscar os dados do usuário
+          const userDataPromise = supabase
+            .from('users')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
             
-            // Obter metadados do usuário para verificar o nome correto
-            const { data: authUser } = await supabase.auth.getUser();
-            const correctName = authUser?.user?.user_metadata?.name || 'Novo Usuário';
+          // Usar Race para evitar ficar preso
+          const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
             
-            // Atualizar o nome apenas se estiver realmente vazio
-            const { error: updateError } = await supabase
-              .from('users')
-              .update({ name: correctName })
-              .eq('id', userData.id);
-              
-            if (updateError) {
-              console.error('Erro ao atualizar nome do usuário no evento:', updateError);
-            } else {
-              userData.name = correctName;
-              console.log('Nome do usuário atualizado para:', correctName);
-            }
+          if (userError) {
+            console.error('Erro ao buscar dados do usuário no evento de autenticação:', userError);
+            throw userError;
           }
           
-          const currentUser: User = {
-            id: userData.id,
-            name: userData.name,
-            registration: userData.registration,
-            email: userData.email,
-            role: userData.role,
-            status: userData.status
+          if (userData) {
+            console.log('Dados do usuário carregados do evento de autenticação:', userData);
+            
+            // MODIFICAÇÃO: Não substituir automaticamente o nome do usuário
+            // Apenas verificar se o nome está vazio
+            if (!userData.name || userData.name.trim() === '') {
+              console.warn('Nome do usuário está vazio no evento de autenticação');
+              
+              // Obter metadados do usuário para verificar o nome correto
+              const { data: authUser } = await supabase.auth.getUser();
+              const correctName = authUser?.user?.user_metadata?.name || 'Novo Usuário';
+              
+              // Atualizar o nome apenas se estiver realmente vazio
+              const { error: updateError } = await supabase
+                .from('users')
+                .update({ name: correctName })
+                .eq('id', userData.id);
+                
+              if (updateError) {
+                console.error('Erro ao atualizar nome do usuário no evento:', updateError);
+              } else {
+                userData.name = correctName;
+                console.log('Nome do usuário atualizado para:', correctName);
+              }
+            }
+            
+            const currentUser: User = {
+              id: userData.id,
+              name: userData.name,
+              registration: userData.registration,
+              email: userData.email,
+              role: userData.role,
+              status: userData.status
+            };
+            
+            console.log("Atualizando usuário no estado a partir do evento:", currentUser);
+            setUser(currentUser);
+          } else {
+            console.warn('Dados do usuário não encontrados no evento de autenticação');
+            throw new Error('Usuário não encontrado na tabela users');
+          }
+        } catch (userFetchError) {
+          // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA quando há problema na busca dos dados
+          console.error('Erro ou timeout ao buscar dados do usuário no evento:', userFetchError);
+          console.log('Aplicando solução de contingência para o evento de autenticação');
+          
+          // Criar usuário mínimo com os dados disponíveis
+          const fallbackUser: User = {
+            id: session.user.id,
+            name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Usuário',
+            registration: session.user.user_metadata?.registration || '00000000',
+            email: session.user.email || '',
+            role: 'user', // Assume role padrão
+            status: 'active'
           };
           
-          console.log("Atualizando usuário no estado a partir do evento:", currentUser);
-          setUser(currentUser);
+          console.log('Definindo usuário de contingência a partir do evento:', fallbackUser);
+          setUser(fallbackUser);
+          
+          // Tentar corrigir os dados do usuário em background
+          supabase.rpc('fix_user_data', {
+            user_id: fallbackUser.id,
+            user_name: fallbackUser.name,
+            user_registration: fallbackUser.registration,
+            user_email: fallbackUser.email
+          }).then(({error}) => {
+            if (error) {
+              console.error('Erro ao corrigir dados do usuário em background:', error);
+            } else {
+              console.log('Dados do usuário corrigidos em background a partir do evento');
+            }
+          });
         }
       } else if (event === 'SIGNED_OUT') {
         console.log("Evento de logout detectado");
