@@ -48,26 +48,52 @@ const supabaseOptions = {
     }
   },
   global: {
-    // Aumentar o timeout para 30 segundos (o padrão é 6s)
+    // Aumentar o timeout para 45 segundos (o padrão é 6s)
     fetch: (url: RequestInfo, options?: RequestInit) => {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
       
       // Adicionar o sinal do AbortController às opções
       const fetchOptions = {
         ...options,
-        signal: controller.signal
+        signal: controller.signal,
+        // Adicionar cabeçalhos para melhorar desempenho de cache
+        headers: {
+          ...options?.headers,
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
       };
       
-      const fetchPromise = fetch(url, fetchOptions);
+      // Adicionar logs para debug
+      console.log(`Iniciando fetch para ${typeof url === 'string' ? url : 'URL'}`);
       
-      fetchPromise.finally(() => clearTimeout(timeoutId));
+      const fetchPromise = fetch(url, fetchOptions)
+        .then(response => {
+          console.log(`Resposta recebida de ${typeof url === 'string' ? url : 'URL'}: ${response.status}`);
+          return response;
+        })
+        .catch(error => {
+          console.error(`Erro no fetch para ${typeof url === 'string' ? url : 'URL'}:`, error);
+          throw error;
+        });
+      
+      fetchPromise.finally(() => {
+        clearTimeout(timeoutId);
+        console.log(`Finalizando fetch para ${typeof url === 'string' ? url : 'URL'}`);
+      });
       
       return fetchPromise;
     }
   },
   // Habilitar logs detalhados em ambiente de desenvolvimento
-  debug: import.meta.env.DEV
+  debug: import.meta.env.DEV,
+  // Configuração de retentativas
+  realtime: {
+    params: {
+      eventsPerSecond: 10
+    }
+  }
 };
 
 // Criar o cliente do Supabase com as opções avançadas
@@ -149,6 +175,7 @@ export const mappers = {
 // Substitua por emails reais dos administradores do sistema
 export const ADMIN_EMAILS = [
   'admin@example.com',
+  'krawkzin69@gmail.com', // Adicionado como exemplo, ajuste conforme necessário
   // adicione mais emails aqui
 ];
 
@@ -260,4 +287,157 @@ export interface Exchange {
   createdAt: string;
   updatedAt?: string;
   updatedBy?: string;
-} 
+}
+
+// Função de diagnóstico para verificar conectividade
+export const testSupabaseConnection = async (): Promise<{
+  authStatus: boolean;
+  dbStatus: boolean;
+  userTableStatus: boolean;
+  storageStatus: boolean;
+  details: string[];
+}> => {
+  const details: string[] = [];
+  const result = {
+    authStatus: false,
+    dbStatus: false,
+    userTableStatus: false,
+    storageStatus: false,
+    details
+  };
+  
+  // Teste 1: Verificar API de autenticação
+  try {
+    const start = Date.now();
+    const { data, error } = await supabase.auth.getSession();
+    const elapsed = Date.now() - start;
+    
+    result.authStatus = !error;
+    details.push(`Autenticação: ${!error ? 'OK' : 'Falha'} (${elapsed}ms)`);
+    details.push(`- Sessão: ${data.session ? 'Ativa' : 'Inativa'}`);
+    
+    if (error) {
+      details.push(`- Erro: ${error.message}`);
+    }
+  } catch (e) {
+    details.push(`Autenticação: Exceção - ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  // Teste 2: Verificar acesso ao banco de dados (tabela simples)
+  try {
+    const start = Date.now();
+    const { error } = await supabase.from('users').select('count', { count: 'exact', head: true });
+    const elapsed = Date.now() - start;
+    
+    result.dbStatus = !error;
+    details.push(`Banco de dados: ${!error ? 'OK' : 'Falha'} (${elapsed}ms)`);
+    
+    if (error) {
+      details.push(`- Erro: ${error.message}`);
+    }
+  } catch (e) {
+    details.push(`Banco de dados: Exceção - ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  // Teste 3: Verificar acesso à tabela de usuários
+  if (result.authStatus) {
+    try {
+      const { data: session } = await supabase.auth.getSession();
+      if (session.session) {
+        const start = Date.now();
+        const { data, error } = await supabase
+          .from('users')
+          .select('id')
+          .eq('id', session.session.user.id)
+          .single();
+        const elapsed = Date.now() - start;
+        
+        result.userTableStatus = !error && !!data;
+        details.push(`Tabela de usuários: ${!error && !!data ? 'OK' : 'Falha'} (${elapsed}ms)`);
+        
+        if (error) {
+          details.push(`- Erro: ${error.message}`);
+        }
+      } else {
+        details.push(`Tabela de usuários: Não testada (sem sessão)`);
+      }
+    } catch (e) {
+      details.push(`Tabela de usuários: Exceção - ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    details.push(`Tabela de usuários: Não testada (autenticação falhou)`);
+  }
+  
+  // Teste 4: Verificar acesso ao armazenamento
+  try {
+    const start = Date.now();
+    const { data, error } = await supabase.storage.getBucket('exchanges');
+    const elapsed = Date.now() - start;
+    
+    result.storageStatus = !error;
+    details.push(`Armazenamento: ${!error ? 'OK' : 'Falha'} (${elapsed}ms)`);
+    
+    if (error) {
+      details.push(`- Erro: ${error.message}`);
+    }
+  } catch (e) {
+    details.push(`Armazenamento: Exceção - ${e instanceof Error ? e.message : String(e)}`);
+  }
+  
+  return result;
+};
+
+// Adicionar função auxiliar para verificar latência do Supabase
+export const measureSupabaseLatency = async (): Promise<number> => {
+  try {
+    const start = Date.now();
+    await supabase.from('users').select('count', { count: 'exact', head: true });
+    return Date.now() - start;
+  } catch (e) {
+    console.error('Erro ao medir latência:', e);
+    return -1;
+  }
+};
+
+// Adicionar cache em memória para resultados de pesquisas frequentes
+const memoryCache: Record<string, {data: any, expiry: number}> = {};
+
+// Função para retornar dados da cache ou buscar novos
+export const getCachedOrFetch = async (
+  key: string, 
+  fetchFn: () => Promise<any>, 
+  expirySeconds = 60
+): Promise<any> => {
+  const now = Date.now();
+  
+  // Verificar se temos em cache e se ainda é válido
+  if (memoryCache[key] && memoryCache[key].expiry > now) {
+    console.log(`Usando dados em cache para: ${key}`);
+    return memoryCache[key].data;
+  }
+  
+  // Caso contrário, buscar dados frescos
+  console.log(`Buscando dados frescos para: ${key}`);
+  try {
+    const result = await fetchFn();
+    
+    // Armazenar em cache
+    memoryCache[key] = {
+      data: result,
+      expiry: now + (expirySeconds * 1000)
+    };
+    
+    return result;
+  } catch (error) {
+    console.error(`Erro ao buscar dados para ${key}:`, error);
+    
+    // Se temos dados em cache, mesmo expirados, usamos como fallback
+    if (memoryCache[key]) {
+      console.log(`Usando dados em cache expirados como fallback para: ${key}`);
+      memoryCache[key].expiry = now + (30 * 1000); // Estender por mais 30 segundos
+      return memoryCache[key].data;
+    }
+    
+    throw error;
+  }
+}; 

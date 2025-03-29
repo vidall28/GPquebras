@@ -99,8 +99,15 @@ const App = () => (
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               
-              {/* Rota de diagnóstico - acessível mesmo sem login */}
-              <Route path="/diagnostico" element={<Diagnostics />} />
+              {/* Rota de diagnóstico - acessível apenas para admins */}
+              <Route 
+                path="/diagnostico" 
+                element={
+                  <AdminRoute>
+                    <Diagnostics />
+                  </AdminRoute>
+                } 
+              />
               
               {/* Redirect root to login or dashboard based on auth */}
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
