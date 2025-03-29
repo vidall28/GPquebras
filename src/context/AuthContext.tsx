@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User, ADMIN_EMAILS, Tables } from '@/lib/supabase';
+import { supabase, User, ADMIN_EMAILS, Tables, upsertUser } from '@/lib/supabase';
 
 // Função para recriar o cliente Supabase e tentar corrigir problemas de API key
 const resetSupabaseClient = async () => {
@@ -595,6 +595,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.removeItem('supabase.auth.token');
       sessionStorage.removeItem('supabase.auth.token');
       
+      // Limpar cache de tentativas de contingência
+      localStorage.removeItem('auth_contingency_in_progress');
+      
       // Configuração para persistência da sessão
       const persistenceOptions = {
         persistSession: true
@@ -628,12 +631,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isAdminByEmail = ADMIN_EMAILS.includes(email);
       const shouldBeAdmin = isAdminInMetadata || isAdminByEmail;
       
-      // Criar usuário básico com dados disponíveis
+      // Criar usuário básico com dados disponíveis - garantindo dados válidos
       const basicUser: User = {
         id: authData.user.id,
-        name: userMetadata.name || authData.user.email?.split('@')[0] || 'Usuário',
+        name: userMetadata.name || email.split('@')[0] || 'Usuário', // Usar parte do email como nome
         registration: userMetadata.registration || '00000000',
-        email: authData.user.email || email,
+        email: email, // Usar o email do login que sabemos ser válido
         role: shouldBeAdmin ? 'admin' : 'user',
         status: 'active'
       };
@@ -644,10 +647,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Mostrar mensagem de sucesso
       toast.success('Login realizado com sucesso!');
-      
-      if (basicUser.role === 'admin') {
-        toast.info('Acesso de administrador concedido');
-      }
       
       // Verificar token rapidamente
       try {
@@ -670,87 +669,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Iniciando redirecionamento para dashboard...');
       navigate('/dashboard');
       
-      // Após redirecionar, tentar completar o perfil em segundo plano
-      try {
-        console.log('Tentando buscar perfil completo em segundo plano...');
-        
-        // Usando uma promise com timeout mais curto e tipagem correta
-        const userPromise = new Promise<Tables['users'] | null>(async (resolve) => {
-          try {
-            // Tentar buscar o usuário da tabela
-            const { data, error } = await supabase
-              .from('users')
-              .select('*')
-              .eq('id', basicUser.id)
-              .single();
-              
-            if (error) {
-              console.warn('Erro ao buscar usuário completo:', error.message);
-              resolve(null);
-            } else {
-              resolve(data);
-            }
-          } catch (e) {
-            console.warn('Exceção ao buscar usuário:', e);
-            resolve(null);
+      // Após redirecionar, tentar criar/atualizar o perfil em segundo plano
+      window.setTimeout(async () => {
+        try {
+          console.log('Iniciando criação/atualização do perfil em segundo plano...');
+          
+          // Usar a função helper upsertUser para lidar com a operação
+          const result = await upsertUser(basicUser);
+          
+          if (result.success) {
+            console.log('Perfil criado/atualizado com sucesso');
+          } else {
+            console.warn('Não foi possível criar/atualizar o perfil:', result.error);
           }
-        });
-        
-        // Definir timeout curto (3 segundos)
-        const timeoutPromise = new Promise<null>((resolve) => {
-          setTimeout(() => {
-            console.log('Timeout na busca do perfil completo');
-            resolve(null);
-          }, 3000);
-        });
-        
-        // Buscar o perfil com timeout
-        const userData = await Promise.race([userPromise, timeoutPromise]) as Tables['users'] | null;
-        
-        if (userData) {
-          console.log('Perfil completo obtido com sucesso:', userData);
-          
-          // Atualizar usuário no state com tipagem adequada
-          const completeUser: User = {
-            id: userData.id,
-            name: userData.name || basicUser.name,
-            registration: userData.registration || basicUser.registration,
-            email: userData.email || basicUser.email,
-            role: (userData.role as 'admin' | 'user') || basicUser.role,
-            status: (userData.status as 'active' | 'inactive') || 'active'
-          };
-          
-          console.log('Atualizando usuário com perfil completo:', completeUser);
-          setUser(completeUser);
-        } else {
-          console.log('Perfil completo não encontrado, tentando criar perfil...');
-          
-          // Tentar criar o perfil sem bloquear o fluxo
-          try {
-            const { error: insertError } = await supabase
-              .from('users')
-              .insert([{
-                id: basicUser.id,
-                name: basicUser.name,
-                registration: basicUser.registration,
-                email: basicUser.email,
-                role: basicUser.role,
-                status: 'active'
-              }]);
-              
-            if (insertError) {
-              console.warn('Erro ao criar perfil em segundo plano:', insertError.message);
-            } else {
-              console.log('Perfil criado com sucesso em segundo plano');
-            }
-          } catch (e) {
-            console.warn('Exceção ao criar perfil:', e);
-          }
+        } catch (backgroundError) {
+          console.warn('Erro em segundo plano:', backgroundError);
+          // Não interferir na experiência do usuário com erros em segundo plano
         }
-      } catch (backgroundError) {
-        console.warn('Erro em segundo plano:', backgroundError);
-        // Não interferir na experiência do usuário com erros em segundo plano
-      }
+      }, 1000); // Executar após 1 segundo para garantir que o redirecionamento ocorra primeiro
+      
     } catch (error) {
       console.error('Erro ao fazer login:', error);
       toast.error('Erro ao realizar login: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));

@@ -20,151 +20,143 @@ console.log('Configuração do Supabase:');
 console.log('URL:', supabaseUrl);
 console.log('API Key:', supabaseKey ? `${supabaseKey.substring(0, 5)}...${supabaseKey.substring(supabaseKey.length - 5)}` : 'Indefinida');
 
-// Configurações avançadas do cliente Supabase
+// Configurar o cliente Supabase com opções mais robustas
+// No início do arquivo, onde inicializa o cliente Supabase:
+
+// Obter as configurações do Supabase
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Verificar e logar as configurações
+console.log('Configuração do Supabase:');
+console.log('URL:', supabaseUrl);
+console.log('API Key:', supabaseAnonKey ? `${supabaseAnonKey.substring(0, 5)}...${supabaseAnonKey.substring(supabaseAnonKey.length - 5)}` : 'Não definida');
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('ERRO CRÍTICO: Configuração do Supabase incompleta!');
+}
+
+// Configurações avançadas para o cliente
 const supabaseOptions = {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: true,
-    storageKey: 'sb-auth-token', // Chave de armazenamento personalizada
-    storage: {
-      getItem: (key) => {
-        try {
-          const item = localStorage.getItem(key);
-          console.log(`Recuperando token [${key}]:`, item ? 'Encontrado' : 'Não encontrado');
-          return item;
-        } catch (e) {
-          console.error('Erro ao recuperar token:', e);
-          return null;
-        }
-      },
-      setItem: (key, value) => {
-        try {
-          console.log(`Salvando token [${key}]`);
-          localStorage.setItem(key, value);
-        } catch (e) {
-          console.error('Erro ao salvar token:', e);
-        }
-      },
-      removeItem: (key) => {
-        try {
-          console.log(`Removendo token [${key}]`);
-          localStorage.removeItem(key);
-        } catch (e) {
-          console.error('Erro ao remover token:', e);
-        }
-      }
-    }
+    detectSessionInUrl: true
   },
   global: {
-    // Aumentar o timeout para 45 segundos (o padrão é 6s)
-    fetch: (url: RequestInfo, options?: RequestInit) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+    headers: {
+      'X-Client-Info': 'quebras-trocas-gp',
+      'apikey': supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    fetch: async (url: string, options: any = {}) => {
+      // Assegurar que o cabeçalho Authorization esteja presente
+      if (!options.headers) {
+        options.headers = {};
+      }
       
-      // Garantir que headers existe
-      const headers = options?.headers || {};
+      // Logar informações importantes para debug
+      console.log('Iniciando fetch para', url);
       
-      // Adicionar o sinal do AbortController e garantir API key nas opções
-      const fetchOptions = {
-        ...options,
-        signal: controller.signal,
-        headers: {
-          ...headers,
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`,
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
+      // Recuperar token salvo
+      const savedToken = localStorage.getItem('sb-auth-token');
+      console.log('Recuperando token [sb-auth-token]:', savedToken ? 'Encontrado' : 'Não encontrado');
+      
+      // Se tivermos um token salvo, incluí-lo manualmente
+      if (savedToken) {
+        try {
+          const tokenData = JSON.parse(savedToken);
+          if (tokenData && tokenData.access_token) {
+            options.headers['Authorization'] = `Bearer ${tokenData.access_token}`;
+          }
+        } catch (e) {
+          console.error('Erro ao processar token salvo:', e);
         }
-      };
+      }
       
-      // Adicionar logs para debug
-      console.log(`Iniciando fetch para ${typeof url === 'string' ? url : 'URL'}`);
+      // Se não há Authorization header, adicionar ao menos a API key
+      if (!options.headers['Authorization']) {
+        options.headers['Authorization'] = `Bearer ${supabaseAnonKey}`;
+      }
       
-      const fetchPromise = fetch(url, fetchOptions)
-        .then(response => {
-          console.log(`Resposta recebida de ${typeof url === 'string' ? url : 'URL'}: ${response.status}`);
-          return response;
-        })
-        .catch(error => {
-          console.error(`Erro no fetch para ${typeof url === 'string' ? url : 'URL'}:`, error);
-          throw error;
-        });
+      // Garantir que a API key esteja presente
+      options.headers['apikey'] = supabaseAnonKey;
       
-      fetchPromise.finally(() => {
-        clearTimeout(timeoutId);
-        console.log(`Finalizando fetch para ${typeof url === 'string' ? url : 'URL'}`);
-      });
-      
-      return fetchPromise;
+      // Executar o fetch original
+      try {
+        const response = await fetch(url, options);
+        console.log('Resposta recebida de', url + ':', response.status);
+        
+        if (response.status === 403) {
+          console.warn('Resposta 403 Forbidden recebida. Verificar token de autenticação.');
+        }
+        
+        // Se for uma resposta 401/403, tentar salvar o token atualizado
+        if (response.status === 401 || response.status === 403) {
+          try {
+            // Tentar obter sessão novamente
+            const authUrl = `${supabaseUrl}/auth/v1/token?grant_type=refresh_token`;
+            const refreshToken = localStorage.getItem('sb-refresh-token');
+            
+            if (refreshToken) {
+              console.log('Tentando renovar token com refresh token');
+              const refreshResponse = await fetch(authUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': supabaseAnonKey
+                },
+                body: JSON.stringify({ refresh_token: refreshToken })
+              });
+              
+              if (refreshResponse.ok) {
+                const newTokenData = await refreshResponse.json();
+                localStorage.setItem('sb-auth-token', JSON.stringify(newTokenData));
+                console.log('Token renovado com sucesso');
+              }
+            }
+          } catch (refreshError) {
+            console.error('Erro ao tentar renovar token:', refreshError);
+          }
+        }
+        
+        console.log('Finalizando fetch para', url);
+        return response;
+      } catch (error) {
+        console.error('Erro no fetch para', url, error);
+        throw error;
+      }
     }
-  },
-  // Habilitar logs detalhados em ambiente de desenvolvimento
-  debug: true,
-  // Configuração de retentativas
-  realtime: {
-    params: {
-      eventsPerSecond: 10
-    }
-  },
-  headers: {
-    'apikey': supabaseKey,
-    'Authorization': `Bearer ${supabaseKey}`
   }
 };
 
-// Criar o cliente do Supabase com as opções avançadas
-export const supabase = createClient(supabaseUrl, supabaseKey, supabaseOptions);
+// Criar o cliente com as opções avançadas
+const supabase = createClient(supabaseUrl, supabaseAnonKey, supabaseOptions);
 
-// IMPORTANTE: Override para garantir que a API key esteja sempre presente
-const originalFrom = supabase.from.bind(supabase);
-supabase.from = (table) => {
-  const builder = originalFrom(table);
+// Adicionar hook para salvar o token quando for obtido
+supabase.auth.onAuthStateChange((event, session) => {
+  console.log('Mudança de estado de autenticação:', event);
   
-  // Verifica se os headers já contêm a API key
-  const checkAndAddApiKey = (options = {}) => {
-    if (!options.headers) {
-      options.headers = {};
-    }
+  if (session && session.access_token) {
+    console.log('Salvando token [sb-auth-token]');
     
-    if (!options.headers['apikey']) {
-      options.headers['apikey'] = supabaseKey;
-    }
+    // Salvar token em formato que podemos recuperar facilmente
+    const tokenData = {
+      access_token: session.access_token,
+      expires_at: session.expires_at,
+      refresh_token: session.refresh_token
+    };
     
-    if (!options.headers['Authorization']) {
-      options.headers['Authorization'] = `Bearer ${supabaseKey}`;
-    }
+    localStorage.setItem('sb-auth-token', JSON.stringify(tokenData));
     
-    return options;
-  };
-  
-  // Override dos métodos principais para garantir API key
-  const originalSelect = builder.select.bind(builder);
-  builder.select = function(...args) {
-    this.headers = checkAndAddApiKey(this.headers);
-    return originalSelect(...args);
-  };
-  
-  const originalInsert = builder.insert.bind(builder);
-  builder.insert = function(...args) {
-    this.headers = checkAndAddApiKey(this.headers);
-    return originalInsert(...args);
-  };
-  
-  const originalUpdate = builder.update.bind(builder);
-  builder.update = function(...args) {
-    this.headers = checkAndAddApiKey(this.headers);
-    return originalUpdate(...args);
-  };
-  
-  const originalDelete = builder.delete.bind(builder);
-  builder.delete = function(...args) {
-    this.headers = checkAndAddApiKey(this.headers);
-    return originalDelete(...args);
-  };
-  
-  return builder;
-};
+    if (session.refresh_token) {
+      localStorage.setItem('sb-refresh-token', session.refresh_token);
+    }
+  } else if (event === 'SIGNED_OUT') {
+    console.log('Limpando tokens armazenados');
+    localStorage.removeItem('sb-auth-token');
+    localStorage.removeItem('sb-refresh-token');
+  }
+});
 
 console.log('Cliente Supabase inicializado com URL:', supabaseUrl);
 
@@ -601,4 +593,92 @@ export const testSupabaseConfig = async (): Promise<{
 };
 
 // Exportar tipo de retorno da função de teste
-export type SupabaseTestResult = Awaited<ReturnType<typeof testSupabaseConfig>>; 
+export type SupabaseTestResult = Awaited<ReturnType<typeof testSupabaseConfig>>;
+
+// Função para criar ou atualizar um usuário se já existe (upsert)
+export const upsertUser = async (user: User): Promise<{ success: boolean; error?: any }> => {
+  try {
+    console.log(`Tentando upsert para usuário: ${user.id}`);
+    
+    // Verificar se o usuário já existe
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle();
+      
+    if (checkError && !checkError.message.includes('No rows found')) {
+      console.error('Erro ao verificar existência do usuário:', checkError);
+      return { success: false, error: checkError };
+    }
+    
+    if (existingUser) {
+      // Atualizar usuário existente
+      console.log('Atualizando usuário existente:', user.id);
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          name: user.name,
+          registration: user.registration,
+          email: user.email,
+          role: user.role,
+          status: user.status
+        })
+        .eq('id', user.id);
+        
+      if (updateError) {
+        console.error('Erro ao atualizar usuário:', updateError);
+        return { success: false, error: updateError };
+      }
+      
+      console.log('Usuário atualizado com sucesso');
+      return { success: true };
+    } else {
+      // Inserir novo usuário
+      console.log('Criando novo usuário:', user.id);
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert([{
+          id: user.id,
+          name: user.name,
+          registration: user.registration,
+          email: user.email,
+          role: user.role,
+          status: user.status
+        }]);
+        
+      if (insertError) {
+        console.error('Erro ao criar usuário:', insertError);
+        
+        // Segunda tentativa com merge
+        console.log('Tentando inserção com merge...');
+        const { error: mergeError } = await supabase
+          .from('users')
+          .insert([{
+            id: user.id,
+            name: user.name,
+            registration: user.registration,
+            email: user.email,
+            role: user.role,
+            status: user.status
+          }])
+          .onConflict('id')
+          .merge();
+          
+        if (mergeError) {
+          console.error('Erro também na inserção com merge:', mergeError);
+          return { success: false, error: mergeError };
+        }
+        
+        console.log('Usuário inserido com sucesso usando merge');
+        return { success: true };
+      }
+      
+      console.log('Usuário inserido com sucesso');
+      return { success: true };
+    }
+  } catch (error) {
+    console.error('Erro durante upsert de usuário:', error);
+    return { success: false, error };
+  }
+}; 
