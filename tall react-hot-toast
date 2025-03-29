@@ -1,0 +1,5 @@
+[33mbaf98f9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Correção do problema de autenticação e logout, adição de página de diagnóstico, melhorias no gerenciamento de sessão
+[33mcb3c9d6[m Adicionando arquivos ocultos ao repositório
+[33m6d2305c[m Implement code improvements and optimizations
+[33mca5789d[m Refactor Users page
+[33mdb9d28f[m Refactor RecordExchange component

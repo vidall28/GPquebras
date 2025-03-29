@@ -1,12 +1,12 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { DataProvider } from "@/context/DataContext";
 import { AppLayout } from "@/components/Layout/AppLayout";
-import { toast } from "react-hot-toast";
 
 // Interface para as props das rotas administrativas
 interface AdminRouteProps {
