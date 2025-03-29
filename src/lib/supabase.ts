@@ -129,8 +129,8 @@ const supabaseOptions = {
   }
 };
 
-// Criar o cliente com as opções avançadas
-const supabase = createClient(supabaseUrl, supabaseAnonKey, supabaseOptions);
+// Criar o cliente com as opções avançadas e exportá-lo para uso em outros arquivos
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, supabaseOptions);
 
 // Adicionar hook para salvar o token quando for obtido
 supabase.auth.onAuthStateChange((event, session) => {
@@ -288,6 +288,9 @@ export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
 // Extender a funcionalidade do supabase para incluir um simulador de RPC
 // para o check_if_admin enquanto não criamos o procedimento real
 const originalRpc = supabase.rpc.bind(supabase);
+// Define o novo método rpc preservando a referência à instância exportada
+export const originalSupabaseRpc = originalRpc;
+// Sobrescreve o método rpc da instância exportada
 supabase.rpc = (procedureName: string, params?: any, options?: any) => {
   if (procedureName === 'check_if_admin' && params?.user_id) {
     // Simular o procedimento check_if_admin
