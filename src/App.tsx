@@ -33,6 +33,7 @@ import Diagnostics from "@/pages/diagnostics";
 import CategoryEdit from '@/pages/categories/edit';
 import CategoriesList from '@/pages/categories/list';
 import DiagnosticsPage from '@/pages/diagnostics';
+import NotificationsPage from "@/pages/notifications";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -161,6 +162,14 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <Reports />
+                    </ProtectedRoute>
+                  } 
+                />
+                <Route 
+                  path="notifications" 
+                  element={
+                    <ProtectedRoute>
+                      <NotificationsPage />
                     </ProtectedRoute>
                   } 
                 />

@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import { supabase, User, ADMIN_EMAILS, Tables, upsertUser, quickConnectionCheck } from '@/lib/supabase';
+import { useNotifications } from '@/lib/notifications';
+import { ensureOfflineManagerInitialized } from '@/lib/offlineManager';
 
 // Função para recriar o cliente Supabase e tentar corrigir problemas de API key
 const resetSupabaseClient = async () => {
@@ -603,6 +605,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  useEffect(() => {
+    if (user) {
+      console.log("Usuário autenticado, inicializando sistemas avançados");
+      // Inicializar o sistema de notificações quando o usuário estiver autenticado
+      useNotifications.init(user.id);
+      // Inicializar o gerenciador de modo offline
+      ensureOfflineManagerInitialized(user.id);
+      
+      console.log('Sistemas de notificações e offline inicializados para o usuário:', user.id);
+    }
+  }, [user]);
+
   // Login function
   const login = async (email: string, password: string) => {
     setIsLoading(true);
@@ -610,7 +624,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log(`Iniciando processo de login para: ${email}`);
       
-      // NOVO: Verificar rapidamente a conexão antes de prosseguir
+      // Verificar rapidamente a conexão antes de prosseguir
       const connectionCheck = await quickConnectionCheck();
       console.log('Verificação de conexão:', connectionCheck);
       
@@ -638,8 +652,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           console.log('Conexão restaurada após reiniciar cliente');
         } else if (connectionCheck.latency > 5000) {
-          // Se a latência for muito alta, avisar o usuário
-          toast.warning(`Conexão lenta (${connectionCheck.latency}ms). O login pode demorar.`);
+          // Se a latência for muito alta, avisar o usuário mas continuar
+          toast.info(`Conexão lenta (${connectionCheck.latency}ms). O login pode demorar.`);
         }
       }
       
@@ -658,12 +672,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         persistSession: true
       };
       
-      // Fazer login diretamente com o Supabase Auth usando email
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      // Fazer login com timeout para evitar bloqueio indefinido
+      const authPromise = supabase.auth.signInWithPassword({
         email: email,
         password: password,
         options: persistenceOptions
       });
+      
+      // Criar um timeout para a operação de login
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout ao fazer login')), 15000);
+      });
+      
+      // Usar Promise.race para aplicar o timeout
+      const { data: authData, error: authError } = await Promise.race([
+        authPromise,
+        timeoutPromise.then(() => { 
+          throw new Error('Timeout ao fazer login'); 
+        })
+      ]) as any;
       
       console.log('Resposta da autenticação:', 
                  authData ? 'Autenticação bem-sucedida' : 'Sem dados de autenticação', 
@@ -680,11 +707,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Metadados do usuário Auth:', authData.user.user_metadata);
       console.log('ID do usuário autenticado:', authData.user.id);
       
-      // ABORDAGEM ULTRA SIMPLIFICADA:
-      // 1. Verificar admin por email (método mais rápido)
-      // 2. Criar um usuário básico imediatamente
-      // 3. Redirecionar para o dashboard
-      // 4. Buscar dados completos em segundo plano
+      // ABORDAGEM OTIMIZADA: 
+      // 1. Criar usuário básico com dados garantidos IMEDIATAMENTE
+      // 2. Redirecionar para dashboard imediatamente
+      // 3. Buscar detalhes adicionais em segundo plano
 
       // Verificar email administrativo (mais rápido, não depende de banco)
       const isAdminByEmail = ADMIN_EMAILS.includes(email);
@@ -710,61 +736,114 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       toast.success('Login realizado com sucesso!');
       
       // CRÍTICO: Redirecionar para o dashboard IMEDIATAMENTE
+      console.log('Iniciando redirecionamento para dashboard...');
       navigate('/dashboard');
       
-      // BACKGROUND: Buscar dados completos e melhorar o perfil do usuário
-      setTimeout(async () => {
+      // BACKGROUND: Operações adicionais em segundo plano para não bloquear a UI
+      window.setTimeout(async () => {
         try {
-          console.log('Buscando dados completos do usuário em segundo plano...');
+          console.log('Executando operações em segundo plano...');
           
-          // Tentar buscar o perfil completo do usuário
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', basicUser.id)
-            .maybeSingle();
-          
-          if (userError) {
-            console.warn('Erro ao buscar perfil do usuário:', userError);
-          } else if (userData) {
-            console.log('Perfil do usuário encontrado:', userData);
+          // 1. Buscar perfil completo do usuário com timeout
+          try {
+            const userPromise = supabase
+              .from('users')
+              .select('*')
+              .eq('id', basicUser.id)
+              .maybeSingle();
             
-            // Atualizar o state com dados mais completos
-            setUser({
-              id: userData.id,
-              name: userData.name || basicUser.name,
-              registration: userData.registration || basicUser.registration,
-              email: userData.email || basicUser.email,
-              role: userData.role || basicUser.role,
-              status: userData.status || basicUser.status
+            const userTimeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('Timeout ao buscar perfil')), 5000);
             });
             
-            // Se o usuário atual não é admin mas deveria ser, mostrar uma mensagem
-            if (basicUser.role !== 'admin' && userData.role === 'admin') {
-              toast.info('Permissões administrativas verificadas e atualizadas');
-            }
-          } else {
-            console.log('Perfil do usuário não encontrado, criando novo perfil');
+            const { data: userData, error: userError } = await Promise.race([
+              userPromise,
+              userTimeoutPromise
+            ]) as any;
             
-            // Tentar criar o perfil do usuário
-            try {
-              await upsertUser(basicUser);
-              console.log('Perfil do usuário criado com sucesso');
-            } catch (createError) {
-              console.error('Erro ao criar perfil:', createError);
+            if (userError) {
+              console.warn('Erro ao buscar perfil do usuário:', userError);
+            } else if (userData) {
+              console.log('Perfil do usuário encontrado:', userData);
+              
+              // Atualizar o state com dados mais completos
+              const updatedUser = {
+                id: userData.id,
+                name: userData.name || basicUser.name,
+                registration: userData.registration || basicUser.registration,
+                email: userData.email || basicUser.email,
+                role: userData.role || basicUser.role,
+                status: userData.status || basicUser.status
+              };
+              
+              setUser(updatedUser);
+              
+              // Se o usuário agora é admin mas não era antes, mostrar mensagem
+              if (updatedUser.role === 'admin' && basicUser.role !== 'admin') {
+                toast.info('Permissões administrativas verificadas e atualizadas');
+              }
+            } else {
+              // Usuário não existe no banco, criar um novo
+              console.log('Perfil não encontrado, criando novo perfil');
+              
+              try {
+                const upsertResult = await upsertUser(basicUser);
+                if (!upsertResult.success) {
+                  console.warn('Erro ao criar perfil:', upsertResult.error);
+                }
+              } catch (createError) {
+                console.warn('Exceção ao criar perfil:', createError);
+              }
             }
+          } catch (profileError) {
+            console.warn('Erro na operação de perfil em segundo plano:', profileError);
           }
+          
+          // 2. Verificar status de admin no banco
+          try {
+            if (!isAdminByEmail) {
+              console.log('Verificando status de admin no banco...');
+              const isAdminInDB = await checkIfUserIsAdmin(basicUser.id);
+              
+              if (isAdminInDB && basicUser.role !== 'admin') {
+                console.log('Usuário identificado como admin no banco');
+                
+                setUser(prev => ({
+                  ...prev,
+                  role: 'admin'
+                }));
+                
+                toast.info('Permissões administrativas concedidas');
+              }
+            }
+          } catch (adminError) {
+            console.warn('Erro ao verificar status de admin:', adminError);
+          }
+          
         } catch (bgError) {
-          console.warn('Erro nas operações em segundo plano:', bgError);
+          console.warn('Erro geral nas operações em segundo plano:', bgError);
         } finally {
           // Garantir que o loading seja desligado
           setIsLoading(false);
         }
-      }, 100);
-      
+      }, 500);
     } catch (error) {
       console.error('Erro fatal ao fazer login:', error);
-      toast.error('Erro ao realizar login: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
+      
+      // Mensagem de erro mais informativa
+      let errorMessage = 'Erro ao realizar login';
+      
+      if (error instanceof Error) {
+        if (error.message.includes('Timeout')) {
+          errorMessage = 'O servidor demorou muito para responder. Verifique sua conexão.';
+        } else if (error.message.includes('fetch')) {
+          errorMessage = 'Erro de conexão. Verifique sua internet.';
+        } else {
+          errorMessage += ': ' + error.message;
+        }
+      }
+      
+      toast.error(errorMessage);
       setIsLoading(false);
     }
   };

@@ -10,7 +10,8 @@ import {
   BarChart4,
   ChevronDown,
   X,
-  AlertCircle
+  AlertCircle,
+  Bell
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -55,6 +56,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
       title: 'Histórico',
       path: '/history',
       icon: <History size={20} />
+    },
+    {
+      title: 'Notificações',
+      path: '/notifications',
+      icon: <Bell size={20} />
     },
     {
       title: 'Administração',

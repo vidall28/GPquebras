@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,6 +16,9 @@ import {
 } from '@/lib/supabase';
 import { toast } from '@/lib/toast';
 import { useNavigate } from 'react-router-dom';
+import { OfflineManager, useOnlineStatus } from '@/lib/offlineManager';
+import { Loader2, RotateCw } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 // Função para reinicializar o cliente Supabase em caso de problemas
 const resetSupabaseClient = async () => {
@@ -237,6 +240,215 @@ const LoginTroubleshooting = () => {
   );
 };
 
+// Adicionar nova seção para Diagnóstico de Sincronização
+function SynchronizationStatus() {
+  const isOnline = useOnlineStatus();
+  const [pendingOperations, setPendingOperations] = useState([]);
+  const [syncStatus, setSyncStatus] = useState('idle');
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  
+  useEffect(() => {
+    // Atualiza a lista de operações pendentes a cada 5 segundos
+    const timer = setInterval(() => {
+      const operations = OfflineManager.getPendingOperations();
+      setPendingOperations(operations);
+    }, 5000);
+    
+    // Carrega a lista inicial
+    setPendingOperations(OfflineManager.getPendingOperations());
+    
+    return () => clearInterval(timer);
+  }, []);
+  
+  const handleForceSync = async () => {
+    if (!isOnline) {
+      toast({
+        title: "Erro de sincronização",
+        description: "Você está offline. Não é possível sincronizar.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    try {
+      setIsSyncing(true);
+      setSyncStatus('syncing');
+      
+      const result = await OfflineManager.synchronize();
+      
+      setLastSync(new Date());
+      setSyncStatus('success');
+      toast({
+        title: "Sincronização concluída",
+        description: `${result.success} operações sincronizadas, ${result.failed} falhas.`,
+        variant: result.failed > 0 ? "destructive" : "default",
+      });
+      
+      // Atualiza a lista após a sincronização
+      setPendingOperations(OfflineManager.getPendingOperations());
+    } catch (error) {
+      setSyncStatus('error');
+      console.error('Erro ao sincronizar:', error);
+      toast({
+        title: "Erro de sincronização",
+        description: "Ocorreu um erro ao sincronizar os dados. Tente novamente mais tarde.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+  
+  const handleClearQueue = () => {
+    if (window.confirm('Tem certeza que deseja limpar todas as operações pendentes? Esta ação não pode ser desfeita.')) {
+      OfflineManager.clearQueue();
+      setPendingOperations([]);
+      toast({
+        title: "Fila limpa",
+        description: "Todas as operações pendentes foram removidas.",
+      });
+    }
+  };
+  
+  // Agrupar operações por tipo
+  const operationsByType = pendingOperations.reduce((acc, op) => {
+    const type = op.type;
+    if (!acc[type]) acc[type] = [];
+    acc[type].push(op);
+    return acc;
+  }, {});
+  
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-medium">Estado de Sincronização</h3>
+        <Badge variant={isOnline ? "default" : "outline"}>
+          {isOnline ? "Online" : "Offline"}
+        </Badge>
+      </div>
+      
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Operações Pendentes</CardTitle>
+            <CardDescription>
+              Operações que serão sincronizadas quando você estiver online
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {pendingOperations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhuma operação pendente</p>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(operationsByType).map(([type, operations]) => (
+                  <div key={type} className="space-y-2">
+                    <h4 className="text-sm font-medium">{type.toUpperCase()} ({operations.length})</h4>
+                    <ul className="space-y-1">
+                      {operations.slice(0, 5).map((op) => (
+                        <li key={op.id} className="text-xs text-muted-foreground flex items-center justify-between">
+                          <span>
+                            {op.table}: {new Date(op.createdAt).toLocaleString()}
+                          </span>
+                          <Badge 
+                            variant={op.status === 'failed' ? "destructive" : "outline"}
+                            className="text-[10px]"
+                          >
+                            {op.status} {op.retries > 0 && `(${op.retries})`}
+                          </Badge>
+                        </li>
+                      ))}
+                      {operations.length > 5 && (
+                        <li className="text-xs text-muted-foreground text-center">
+                          + {operations.length - 5} outras operações
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+          <CardFooter className="flex justify-between">
+            <Button 
+              variant="outline" 
+              size="sm"
+              onClick={handleClearQueue}
+              disabled={pendingOperations.length === 0}
+            >
+              Limpar Fila
+            </Button>
+            <div className="text-xs text-muted-foreground">
+              Total: {pendingOperations.length} operações
+            </div>
+          </CardFooter>
+        </Card>
+        
+        <Card>
+          <CardHeader>
+            <CardTitle>Sincronização Manual</CardTitle>
+            <CardDescription>
+              Force a sincronização de operações pendentes
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm">Status:</span>
+                <Badge variant={
+                  syncStatus === 'idle' ? "outline" : 
+                  syncStatus === 'syncing' ? "default" : 
+                  syncStatus === 'success' ? "success" : "destructive"
+                }>
+                  {syncStatus === 'idle' ? "Aguardando" : 
+                   syncStatus === 'syncing' ? "Sincronizando" : 
+                   syncStatus === 'success' ? "Sincronizado" : "Erro"}
+                </Badge>
+              </div>
+              
+              {lastSync && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Última sincronização:</span>
+                  <span className="text-xs text-muted-foreground">
+                    {lastSync.toLocaleString()}
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            <Alert>
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Dica</AlertTitle>
+              <AlertDescription>
+                A sincronização acontece automaticamente quando você fica online, mas você também pode forçá-la manualmente.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+          <CardFooter>
+            <Button 
+              onClick={handleForceSync} 
+              disabled={!isOnline || isSyncing || pendingOperations.length === 0}
+              className="w-full"
+            >
+              {isSyncing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Sincronizando...
+                </>
+              ) : (
+                <>
+                  <RotateCw className="mr-2 h-4 w-4" />
+                  Forçar Sincronização
+                </>
+              )}
+            </Button>
+          </CardFooter>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 const DiagnosticsPage: React.FC = () => {
   const { user, isAdmin, isAuthenticated, resetSupabaseClient } = useAuth();
   const navigate = useNavigate();
@@ -384,343 +596,35 @@ const DiagnosticsPage: React.FC = () => {
 
   // Qualquer pessoa pode acessar esta página para diagnóstico
   return (
-    <div className="container mx-auto py-10">
-      <h1 className="text-2xl font-bold mb-6">Diagnóstico do Sistema</h1>
+    <div className="container space-y-8">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Diagnóstico do Sistema</h2>
+          <p className="text-muted-foreground">
+            Ferramentas para verificar e resolver problemas no sistema
+          </p>
+        </div>
+      </div>
       
-      {/* Login Troubleshooting aceita todos os usuários, mesmo não logados */}
-      <LoginTroubleshooting />
-      
-      <div className="my-6 border-t border-border"></div>
-      
-      {!user ? (
-        <Alert color="red" title="Acesso não autenticado">
-          <p>Você precisa estar logado para acessar os diagnósticos completos.</p>
-          <Button className="mt-3" onClick={() => navigate('/login')}>Fazer Login</Button>
-        </Alert>
-      ) : (
-        <>
-          <div className="mb-6">
-            <Alert 
-              color={user.role === 'admin' ? 'green' : 'yellow'} 
-              title={`Usuário: ${user.name} (${user.email})`}
-            >
-              <p>
-                Status: <Badge color={user.status === 'active' ? 'green' : 'gray'}>{user.status}</Badge> | 
-                Função: <Badge color={user.role === 'admin' ? 'blue' : 'gray'}>{user.role}</Badge>
-              </p>
-            </Alert>
-          </div>
-          
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-6">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="config">Configuração</TabsTrigger>
-              <TabsTrigger value="connection">Conexão</TabsTrigger>
-              <TabsTrigger value="admin">Status Admin</TabsTrigger>
-              <TabsTrigger value="cache">Cache</TabsTrigger>
-            </TabsList>
-            
-            {/* Aba de configuração do Supabase */}
-            <TabsContent value="config">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Configuração do Supabase</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex space-x-4 mb-4">
-                    <Button onClick={testConfig} disabled={isLoading}>
-                      {isLoading ? 'Testando...' : 'Testar Configuração'}
-                    </Button>
-                    
-                    <Button 
-                      onClick={async () => {
-                        setIsLoading(true);
-                        try {
-                          const reset = await resetSupabaseClient();
-                          if (reset) {
-                            // Testar a configuração novamente
-                            await testConfig();
-                          }
-                        } catch (error) {
-                          console.error('Erro ao reinicializar cliente:', error);
-                          toast.error('Erro ao reinicializar cliente Supabase');
-                        } finally {
-                          setIsLoading(false);
-                        }
-                      }} 
-                      disabled={isLoading}
-                      variant="outline"
-                    >
-                      {isLoading ? 'Reinicializando...' : 'Reinicializar Cliente'}
-                    </Button>
-                  </div>
-                  
-                  {configTest && (
-                    <div>
-                      <div className="mb-4">
-                        <Alert variant={configTest.success ? "success" : "destructive"}>
-                          <AlertTitle>{configTest.success ? 'Configuração OK' : 'Problema de Configuração'}</AlertTitle>
-                          <AlertDescription>
-                            {configTest.message}
-                          </AlertDescription>
-                        </Alert>
-                      </div>
-                      
-                      <div className="mt-4">
-                        <p className="font-semibold mb-2">Detalhes da Configuração:</p>
-                        <div className="bg-muted p-3 rounded-md overflow-auto max-h-[200px]">
-                          <p className="text-sm font-mono">URL do Supabase: {configTest.details.supabaseUrl}</p>
-                          <p className="text-sm font-mono">API Key definida: {configTest.details.apiKeyDefined ? 'Sim' : 'Não'}</p>
-                          <p className="text-sm font-mono">Comprimento da API Key: {configTest.details.apiKeyLength} caracteres</p>
-                          
-                          {configTest.details.error && (
-                            <div className="mt-2 text-destructive">
-                              <p className="font-semibold">Erro:</p>
-                              <p className="text-sm">{configTest.details.error.message}</p>
-                              <p className="text-sm">{configTest.details.error.hint}</p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="mt-4">
-                        <p className="font-semibold mb-2">Variáveis de Ambiente:</p>
-                        <div className="bg-muted p-3 rounded-md overflow-auto max-h-[200px]">
-                          {Object.keys(envVars).map(key => (
-                            <p key={key} className="text-sm font-mono">
-                              {key}: {envVars[key]}
-                            </p>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Aba de diagnóstico de conexão */}
-            <TabsContent value="connection">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Status de Conexão</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex space-x-4 mb-4">
-                    <Button onClick={runConnectionTest} disabled={isLoading}>
-                      {isLoading ? 'Testando...' : 'Testar Conexão'}
-                    </Button>
-                    <Button onClick={checkLatency} disabled={isLoading} variant="outline">
-                      {isLoading ? 'Verificando...' : 'Medir Latência'}
-                    </Button>
-                  </div>
-                  
-                  {latency !== null && (
-                    <div className="mb-4">
-                      <p className="font-semibold">Latência:</p>
-                      <Badge variant={latency < 500 ? "success" : latency < 1000 ? "warning" : "destructive"}>
-                        {latency < 0 ? 'Erro ao medir' : `${latency}ms`}
-                      </Badge>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {latency < 300 ? 'Excelente' : 
-                         latency < 500 ? 'Boa' : 
-                         latency < 1000 ? 'Regular' : 
-                         'Ruim - Pode causar timeouts'}
-                      </p>
-                    </div>
-                  )}
-                  
-                  {connectionStatus && (
-                    <div>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <p className="font-semibold mb-1">Autenticação:</p>
-                          <Badge variant={connectionStatus.success ? "success" : "destructive"}>
-                            {connectionStatus.success ? 'OK' : 'Falha'}
-                          </Badge>
-                        </div>
-                        <div>
-                          <p className="font-semibold mb-1">Banco de Dados:</p>
-                          <Badge variant={connectionStatus.success ? "success" : "destructive"}>
-                            {connectionStatus.success ? 'OK' : 'Falha'}
-                          </Badge>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-4">
-                        <p className="font-semibold mb-2">Detalhes:</p>
-                        <div className="bg-muted p-3 rounded-md overflow-auto max-h-[300px]">
-                          {connectionStatus.details}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Aba de status de administrador */}
-            <TabsContent value="admin">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Status de Administrador</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {!isAuthenticated ? (
-                    <Alert>
-                      <AlertTitle>Não autenticado</AlertTitle>
-                      <AlertDescription>
-                        Faça login para verificar seu status de administrador.
-                      </AlertDescription>
-                    </Alert>
-                  ) : (
-                    <>
-                      <Button onClick={checkAdminStatus} disabled={isLoading} className="mb-4">
-                        {isLoading ? 'Verificando...' : 'Verificar Status Admin'}
-                      </Button>
-                      
-                      {adminStatus !== null && (
-                        <div>
-                          <p className="font-semibold">Resultado do banco de dados:</p>
-                          <Badge color={adminStatus ? 'blue' : 'gray'} className="mt-1">
-                            {adminStatus ? 'Administrador confirmado' : 'Usuário comum'}
-                          </Badge>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Aba de gerenciamento de cache */}
-            <TabsContent value="cache">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Gerenciamento de Cache</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="mb-4">
-                    Limpar o cache local pode ajudar a resolver problemas de autenticação e sincronização de dados.
-                  </p>
-                  
-                  <Button 
-                    onClick={clearLocalCache} 
-                    variant={cacheClear ? "success" : "default"}
-                    disabled={cacheClear}
-                  >
-                    {cacheClear ? 'Cache Limpo!' : 'Limpar Cache Local'}
-                  </Button>
-                  
-                  <div className="mt-4">
-                    <p className="font-semibold mb-2">Quando limpar o cache:</p>
-                    <ul className="list-disc pl-5 space-y-1">
-                      <li>Quando há problemas persistentes de login</li>
-                      <li>Quando seu status de administrador não é reconhecido</li>
-                      <li>Quando os dados não são atualizados corretamente</li>
-                      <li>Antes de relatar problemas aos desenvolvedores</li>
-                    </ul>
-                  </div>
-                  
-                  <Alert className="mt-4">
-                    <AlertTitle>Nota</AlertTitle>
-                    <AlertDescription>
-                      Limpar o cache irá fazer logout da sua sessão atual. Você precisará fazer login novamente.
-                    </AlertDescription>
-                  </Alert>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-          
-          {activeTab === 'admin' && (
-            <Card className="mt-6">
-              <CardHeader>
-                <CardTitle>Detalhes do Usuário</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                  <div>
-                    <p className="font-semibold">ID:</p>
-                    <p className="text-sm font-mono">{user.id}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Email:</p>
-                    <p>{user.email}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Nome:</p>
-                    <p>{user.name}</p>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Papel na aplicação:</p>
-                    <Badge variant={user.role === 'admin' ? "success" : "default"}>
-                      {user.role}
-                    </Badge>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Papel no banco de dados:</p>
-                    <Badge variant={user.role === 'admin' ? "success" : "default"}>
-                      {user.role}
-                    </Badge>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Admin por email:</p>
-                    <Badge variant={user.role === 'admin' ? "success" : "default"}>
-                      {user.role === 'admin' ? 'Sim' : 'Não'}
-                    </Badge>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Admin via RPC:</p>
-                    <Badge variant={user.role === 'admin' ? "success" : "default"}>
-                      {user.role === 'admin' ? 'Sim' : 'Não'}
-                    </Badge>
-                  </div>
-                  <div>
-                    <p className="font-semibold">Admin no contexto:</p>
-                    <Badge variant={user.role === 'admin' ? "success" : "default"}>
-                      {user.role === 'admin' ? 'Sim' : 'Não'}
-                    </Badge>
-                  </div>
-                </div>
-                
-                <div className="mt-4">
-                  <p className="font-semibold mb-1">Emails de administradores configurados:</p>
-                  <div className="bg-muted p-3 rounded-md">
-                    <ul className="text-sm font-mono">
-                      {ADMIN_EMAILS.map((email: string, index: number) => (
-                        <li key={index}>{email}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-          
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle>Ferramentas de Diagnóstico</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <Button 
-                    color="indigo" 
-                    onClick={handleResetClient}
-                    disabled={isResetting}
-                    className="mb-2"
-                  >
-                    {isResetting ? 'Reiniciando...' : 'Reiniciar Cliente Supabase'}
-                  </Button>
-                  <p className="text-sm text-gray-600">
-                    Reinicia o cliente Supabase e reconfigura as chaves de API.
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </>
-      )}
+      <Tabs defaultValue="connection">
+        <TabsList>
+          <TabsTrigger value="connection">Conexão</TabsTrigger>
+          <TabsTrigger value="sync">Sincronização</TabsTrigger>
+          <TabsTrigger value="login">Problemas de Login</TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="connection" className="space-y-4">
+          <ConnectionTest />
+        </TabsContent>
+        
+        <TabsContent value="sync" className="space-y-4">
+          <SynchronizationStatus />
+        </TabsContent>
+        
+        <TabsContent value="login" className="space-y-4">
+          <LoginTroubleshooting />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 };

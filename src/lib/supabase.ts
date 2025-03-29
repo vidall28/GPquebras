@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { registerDbOperation } from '@/components/DataHealthIndicator';
 
 // Obter variáveis de ambiente
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -15,49 +16,93 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 // Configurações avançadas para o cliente
-const supabaseOptions = {
+const supabaseConfig = {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true
   },
   global: {
-    headers: {
-      'X-Client-Info': 'quebras-trocas-gp',
-      'apikey': supabaseKey,
-      'Content-Type': 'application/json',
-    },
-    fetch: async (url: string, options: any = {}) => {
-      // Logs importantes para debug
-      console.log('Iniciando fetch para', url);
+    fetch: async (url: RequestInfo | URL, options?: RequestInit) => {
+      const startTime = performance.now();
       
-      // Assegurar que headers existam
-      if (!options.headers) {
-        options.headers = {};
+      // Extrair informações sobre o tipo de operação
+      let operationType: 'select' | 'insert' | 'update' | 'delete' | 'rpc' = 'select';
+      let tableName = 'unknown';
+      
+      const urlString = url.toString();
+      if (urlString.includes('/rest/v1/rpc/')) {
+        operationType = 'rpc';
+        const matches = urlString.match(/\/rest\/v1\/rpc\/([^?]+)/);
+        tableName = matches ? matches[1] : 'unknown';
+      } else if (urlString.includes('/rest/v1/')) {
+        const matches = urlString.match(/\/rest\/v1\/([^?]+)/);
+        tableName = matches ? matches[1] : 'unknown';
+        
+        if (options?.method === 'POST') operationType = 'insert';
+        else if (options?.method === 'PATCH' || options?.method === 'PUT') operationType = 'update';
+        else if (options?.method === 'DELETE') operationType = 'delete';
       }
       
-      // Garantir que a API key esteja presente
-      if (!options.headers['apikey']) {
-        options.headers['apikey'] = supabaseKey;
-      }
-      
-      // Garantir que Authorization esteja presente
-      if (!options.headers['Authorization']) {
-        options.headers['Authorization'] = `Bearer ${supabaseKey}`;
-      }
-      
-      // Logs de debugging para headers mais importantes
-      console.log('Headers da requisição:');
-      console.log('- API Key:', options.headers['apikey'] ? 'Configurada' : 'Não configurada');
-      console.log('- Authorization:', options.headers['Authorization'] ? 'Configurada' : 'Não configurada');
-      
-      // Executar o fetch original
       try {
+        // Log para debug
+        if (import.meta.env.DEV) {
+          console.log(`Supabase ${operationType.toUpperCase()} ${tableName} request:`, {
+            url: urlString,
+            method: options?.method || 'GET'
+          });
+        }
+        
+        // Adicionar headers necessários
+        options = options || {};
+        options.headers = options.headers || {};
+        
+        // Garantir que a API key e a autorização estão presentes nos headers
+        if (!options.headers['apikey'] && supabaseUrl && supabaseKey) {
+          options.headers['apikey'] = supabaseKey;
+        }
+        
+        // Fazer a requisição
         const response = await fetch(url, options);
-        console.log('Resposta recebida de', url + ':', response.status);
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
+        
+        // Verificar se a resposta é uma falha
+        const isSuccess = response.ok;
+        
+        // Registrar a operação
+        registerDbOperation({
+          table: tableName,
+          operation: operationType,
+          duration,
+          success: isSuccess,
+          error: isSuccess ? undefined : `HTTP ${response.status}: ${response.statusText}`
+        });
+        
+        // Log para debug
+        if (import.meta.env.DEV) {
+          console.log(`Supabase ${operationType.toUpperCase()} ${tableName} response:`, {
+            status: response.status,
+            duration: `${duration}ms`,
+            success: isSuccess
+          });
+        }
+        
         return response;
       } catch (error) {
-        console.error('Erro no fetch para', url, error);
+        const endTime = performance.now();
+        const duration = Math.round(endTime - startTime);
+        
+        // Registrar a operação com falha
+        registerDbOperation({
+          table: tableName,
+          operation: operationType,
+          duration,
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        
+        console.error(`Erro na requisição Supabase ${operationType} ${tableName}:`, error);
         throw error;
       }
     }
@@ -65,7 +110,7 @@ const supabaseOptions = {
 };
 
 // CRIAR e EXPORTAR o cliente Supabase
-export const supabase = createClient(supabaseUrl, supabaseKey, supabaseOptions);
+export const supabase = createClient(supabaseUrl, supabaseKey, supabaseConfig);
 
 // Log de confirmação
 console.log('Cliente Supabase inicializado com URL:', supabaseUrl);
@@ -725,6 +770,177 @@ export const quickConnectionCheck = async (): Promise<{ ok: boolean, latency: nu
       ok: false,
       latency: -1,
       message: error instanceof Error ? error.message : 'Erro desconhecido'
+    };
+  }
+};
+
+// Notificações
+export interface CreateNotificationParams {
+  userId: string;
+  type: string;
+  title: string;
+  message: string;
+  data?: any;
+  link?: string;
+}
+
+export interface NotificationCountResult {
+  count: number;
+  error: Error | null;
+}
+
+/**
+ * Cria uma nova notificação para um usuário
+ */
+export const createNotification = async (params: CreateNotificationParams) => {
+  try {
+    const { data, error } = await supabase.rpc('create_notification', {
+      p_user_id: params.userId,
+      p_type: params.type,
+      p_title: params.title,
+      p_message: params.message,
+      p_data: params.data,
+      p_link: params.link
+    });
+    
+    if (error) throw error;
+    
+    return {
+      success: data?.success || false,
+      notificationId: data?.notification_id,
+      error: data?.error ? new Error(data.error) : null
+    };
+  } catch (error) {
+    console.error('Erro ao criar notificação:', error);
+    return {
+      success: false,
+      notificationId: null,
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+};
+
+/**
+ * Marca uma notificação como lida ou não lida
+ */
+export const markNotificationAsRead = async (notificationId: string, read: boolean = true) => {
+  try {
+    const { data, error } = await supabase.rpc('mark_notification_as_read', {
+      p_notification_id: notificationId,
+      p_read: read
+    });
+    
+    if (error) throw error;
+    
+    return {
+      success: data?.success || false,
+      error: data?.error ? new Error(data.error) : null
+    };
+  } catch (error) {
+    console.error('Erro ao marcar notificação como lida:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+};
+
+/**
+ * Marca todas as notificações de um usuário como lidas
+ */
+export const markAllNotificationsAsRead = async (userId?: string) => {
+  try {
+    const { data, error } = await supabase.rpc('mark_all_notifications_as_read', userId ? {
+      p_user_id: userId
+    } : {});
+    
+    if (error) throw error;
+    
+    return {
+      success: data?.success || false,
+      count: data?.count || 0,
+      error: data?.error ? new Error(data.error) : null
+    };
+  } catch (error) {
+    console.error('Erro ao marcar todas notificações como lidas:', error);
+    return {
+      success: false,
+      count: 0,
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+};
+
+/**
+ * Exclui uma notificação
+ */
+export const deleteNotification = async (notificationId: string) => {
+  try {
+    const { data, error } = await supabase.rpc('delete_notification', {
+      p_notification_id: notificationId
+    });
+    
+    if (error) throw error;
+    
+    return {
+      success: data?.success || false,
+      error: data?.error ? new Error(data.error) : null
+    };
+  } catch (error) {
+    console.error('Erro ao excluir notificação:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+};
+
+/**
+ * Limpa todas as notificações de um usuário
+ */
+export const clearNotifications = async (userId?: string) => {
+  try {
+    const { data, error } = await supabase.rpc('clear_notifications', userId ? {
+      p_user_id: userId
+    } : {});
+    
+    if (error) throw error;
+    
+    return {
+      success: data?.success || false,
+      count: data?.count || 0,
+      error: data?.error ? new Error(data.error) : null
+    };
+  } catch (error) {
+    console.error('Erro ao limpar notificações:', error);
+    return {
+      success: false,
+      count: 0,
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+};
+
+/**
+ * Conta notificações não lidas de um usuário
+ */
+export const countUnreadNotifications = async (userId?: string): Promise<NotificationCountResult> => {
+  try {
+    const { data, error } = await supabase.rpc('count_unread_notifications', userId ? {
+      p_user_id: userId
+    } : {});
+    
+    if (error) throw error;
+    
+    return {
+      count: data || 0,
+      error: null
+    };
+  } catch (error) {
+    console.error('Erro ao contar notificações não lidas:', error);
+    return {
+      count: 0,
+      error: error instanceof Error ? error : new Error(String(error))
     };
   }
 }; 
