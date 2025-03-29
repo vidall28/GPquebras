@@ -16,7 +16,8 @@ import {
   Download,
   Upload,
   AlertCircle,
-  FileText
+  FileText,
+  RefreshCw
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { CommandInput, CommandList, CommandItem, CommandGroup, Command } from '@/components/ui/command';
@@ -24,11 +25,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 const Products: React.FC = () => {
-  const { products, addProduct, updateProduct, deleteProduct, exportProductsToCSV, importProductsFromCSV } = useData();
+  const { products, addProduct, updateProduct, deleteProduct, exportProductsToCSV, importProductsFromCSV, reloadProducts } = useData();
   const { user, isAdmin } = useAuth();
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<typeof products>([]);
   const [openSearchPopover, setOpenSearchPopover] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -77,7 +79,7 @@ const Products: React.FC = () => {
     setEditingProductId(null);
   };
   
-  const handleAddProduct = (e: React.FormEvent) => {
+  const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!isAdmin) {
@@ -101,14 +103,25 @@ const Products: React.FC = () => {
       return;
     }
     
-    addProduct({
-      name,
-      code,
-      capacity: capacityValue
-    });
-    
-    resetForm();
-    setIsAddDialogOpen(false);
+    try {
+      setIsLoading(true);
+      await addProduct({
+        name,
+        code,
+        capacity: capacityValue
+      });
+      
+      // Recarregar produtos após adicionar
+      console.log('Recarregando produtos após adicionar novo produto');
+      await reloadProducts();
+      
+      resetForm();
+      setIsAddDialogOpen(false);
+    } catch (error) {
+      console.error('Erro ao adicionar produto:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   const handleEditProduct = (e: React.FormEvent) => {
@@ -242,6 +255,20 @@ const Products: React.FC = () => {
         {after}
       </>
     );
+  };
+
+  // Função para atualizar a lista de produtos manualmente
+  const handleRefreshProducts = async () => {
+    try {
+      setIsLoading(true);
+      await reloadProducts();
+      toast.success('Lista de produtos atualizada');
+    } catch (error) {
+      console.error('Erro ao atualizar produtos:', error);
+      toast.error('Erro ao atualizar produtos');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -391,6 +418,15 @@ const Products: React.FC = () => {
                 </form>
               </DialogContent>
             </Dialog>
+            
+            <Button 
+              variant="outline" 
+              className="gap-1"
+              onClick={handleRefreshProducts}
+              disabled={isLoading}
+            >
+              <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} /> Atualizar Lista
+            </Button>
           </div>
         )}
       </div>

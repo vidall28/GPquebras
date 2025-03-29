@@ -29,7 +29,7 @@ import Products from "@/pages/products";
 import Users from "@/pages/users";
 import Reports from "@/pages/reports";
 import NotFound from "@/pages/NotFound";
-import Diagnostico from "@/pages/Diagnostico";
+import Diagnostics from "@/pages/diagnostics";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -100,7 +100,7 @@ const App = () => (
               <Route path="/register" element={<Register />} />
               
               {/* Rota de diagnóstico - acessível mesmo sem login */}
-              <Route path="/diagnostico" element={<Diagnostico />} />
+              <Route path="/diagnostico" element={<Diagnostics />} />
               
               {/* Redirect root to login or dashboard based on auth */}
               <Route path="/" element={<Navigate to="/dashboard" replace />} />

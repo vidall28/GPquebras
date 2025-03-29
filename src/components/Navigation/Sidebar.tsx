@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
@@ -10,7 +9,8 @@ import {
   Users, 
   BarChart4,
   ChevronDown,
-  X
+  X,
+  AlertCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -87,6 +87,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
           adminOnly: true,
         }
       ]
+    },
+    {
+      title: 'Diagnóstico',
+      path: '/diagnostico',
+      icon: <AlertCircle size={20} />,
+      adminOnly: true
     }
   ];
 

@@ -43,6 +43,7 @@ interface DataContextType {
   getProduct: (id: string) => Product | undefined;
   exportProductsToCSV: () => void;
   importProductsFromCSV: (csvData: string) => Promise<{ success: number; errors: number; errorDetails: string[] }>;
+  reloadProducts: () => Promise<void>;
   
   // Exchanges
   exchanges: Exchange[];
@@ -71,34 +72,53 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
   const { user } = useAuth();
 
+  // Função para carregar produtos do Supabase
+  const fetchProducts = async () => {
+    try {
+      console.log('========== INICIANDO CARREGAMENTO DE PRODUTOS ==========');
+      setIsLoading(true);
+      
+      // Verificar se o usuário está autenticado
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session) {
+        console.log('Sem sessão ativa, tentando carregar produtos de qualquer forma');
+      } else {
+        console.log('Sessão ativa encontrada, carregando produtos', sessionData.session.user.id);
+      }
+      
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('name');
+        
+      if (error) {
+        console.error('Erro ao carregar produtos do Supabase:', error);
+        throw error;
+      }
+      
+      if (data) {
+        console.log(`Encontrados ${data.length} produtos no Supabase`);
+        const mappedProducts = data.map(mappers.mapProductFromDB);
+        console.log('Produtos mapeados:', mappedProducts);
+        setProducts(mappedProducts);
+      } else {
+        console.log('Nenhum produto encontrado no Supabase');
+        setProducts([]);
+      }
+      
+      console.log('========== FIM DO CARREGAMENTO DE PRODUTOS ==========');
+    } catch (error) {
+      console.error('Erro ao carregar produtos:', error);
+      toast.error('Erro ao carregar lista de produtos');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Carregar produtos do Supabase
   useEffect(() => {
-    const fetchProducts = async () => {
-      try {
-        setIsLoading(true);
-        const { data, error } = await supabase
-          .from('products')
-          .select('*')
-          .order('name');
-          
-        if (error) {
-          throw error;
-        }
-        
-        if (data) {
-          const mappedProducts = data.map(mappers.mapProductFromDB);
-          setProducts(mappedProducts);
-        }
-      } catch (error) {
-        console.error('Erro ao carregar produtos:', error);
-        toast.error('Erro ao carregar lista de produtos');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
     fetchProducts();
-  }, []);
+  }, [user]); // Adicionado user como dependência para garantir carregamento após login
 
   // Carregar exchanges do Supabase
   useEffect(() => {
@@ -106,6 +126,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!user) {
         console.log('Não há usuário autenticado, ignorando fetchExchanges');
         // Limpar as trocas quando não há usuário autenticado para evitar dados antigos
+        setExchanges([]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // NOVA MODIFICAÇÃO: Adicionar um pequeno atraso para garantir que o usuário está completamente carregado
+      // Isso ajuda a evitar race conditions quando a sessão é detectada mas o estado do usuário ainda não está pronto
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Verificar novamente se ainda temos um usuário (pode ter mudado durante o atraso)
+      if (!user) {
+        console.log('Usuário não mais disponível após atraso, ignorando fetchExchanges');
         setExchanges([]);
         setIsLoading(false);
         return;
@@ -125,61 +157,129 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
         
+        // ADICIONAR TIMEOUT para evitar travamento da busca
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout ao buscar trocas/quebras')), 10000)
+        );
+        
         // Primeiro, buscar todas as trocas/quebras
         console.log('Buscando trocas/quebras do Supabase...');
-        const { data: exchangesData, error: exchangesError } = await supabase
-          .from('exchanges')
-          .select('*')
-          .order('created_at', { ascending: false });
+        
+        try {
+          const exchangesPromise = supabase
+            .from('exchanges')
+            .select('*')
+            .order('created_at', { ascending: false });
+            
+          // Usar Race para evitar ficar preso se a consulta não responder
+          const { data: exchangesData, error: exchangesError } = await Promise.race([exchangesPromise, timeoutPromise]) as any;
+            
+          if (exchangesError) {
+            console.error('Erro ao buscar trocas/quebras:', exchangesError);
+            console.error('Detalhes do erro:', {
+              code: exchangesError.code,
+              message: exchangesError.message,
+              details: exchangesError.details
+            });
+            throw exchangesError;
+          }
           
-        if (exchangesError) {
-          console.error('Erro ao buscar trocas/quebras:', exchangesError);
-          console.error('Detalhes do erro:', {
-            code: exchangesError.code,
-            message: exchangesError.message,
-            details: exchangesError.details
-          });
-          throw exchangesError;
-        }
-        
-        if (!exchangesData) {
-          console.log('Nenhuma troca/quebra encontrada');
-          return;
-        }
-        
-        console.log(`Encontradas ${exchangesData.length} trocas/quebras`);
-        
-        // Para cada troca, buscar os dados do usuário e os itens
-        console.log('Buscando itens e dados de usuários para cada troca/quebra...');
-        const mappedExchanges: Exchange[] = await Promise.all(
-          exchangesData.map(async (exchange) => {
-            console.log(`Processando troca/quebra ID: ${exchange.id}, Label: ${exchange.label}`);
-            
-            // Buscar dados do usuário
-            const { data: userData, error: userError } = await supabase
-              .from('users')
-              .select('id, name, registration')
-              .eq('id', exchange.user_id)
-              .single();
+          if (!exchangesData) {
+            console.log('Nenhuma troca/quebra encontrada');
+            setExchanges([]);
+            setIsLoading(false);
+            return;
+          }
+          
+          console.log(`Encontradas ${exchangesData.length} trocas/quebras`);
+          
+          // Para cada troca, buscar os dados do usuário e os itens
+          console.log('Buscando itens e dados de usuários para cada troca/quebra...');
+          const mappedExchanges: Exchange[] = await Promise.all(
+            exchangesData.map(async (exchange) => {
+              console.log(`Processando troca/quebra ID: ${exchange.id}, Label: ${exchange.label}`);
               
-            if (userError) {
-              console.error(`Erro ao buscar dados do usuário ${exchange.user_id}:`, userError);
-              // Continuar com valores padrão mesmo se houver erro
-            }
-            
-            // Buscar os itens desta troca
-            const { data: itemsData, error: itemsError } = await supabase
-              .from('exchange_items')
-              .select('*')
-              .eq('exchange_id', exchange.id);
+              // Buscar dados do usuário
+              const { data: userData, error: userError } = await supabase
+                .from('users')
+                .select('id, name, registration')
+                .eq('id', exchange.user_id)
+                .single();
+                
+              if (userError) {
+                console.error(`Erro ao buscar dados do usuário ${exchange.user_id}:`, userError);
+                // Continuar com valores padrão mesmo se houver erro
+              }
               
-            if (itemsError) {
-              console.error(`Erro ao buscar itens da troca ${exchange.id}:`, itemsError);
-              return null;
-            }
-            
-            if (!itemsData || itemsData.length === 0) {
-              console.warn(`Troca/quebra ID: ${exchange.id} não possui itens`);
+              // Buscar os itens desta troca
+              const { data: itemsData, error: itemsError } = await supabase
+                .from('exchange_items')
+                .select('*')
+                .eq('exchange_id', exchange.id);
+                
+              if (itemsError) {
+                console.error(`Erro ao buscar itens da troca ${exchange.id}:`, itemsError);
+                return null;
+              }
+              
+              if (!itemsData || itemsData.length === 0) {
+                console.warn(`Troca/quebra ID: ${exchange.id} não possui itens`);
+                return {
+                  id: exchange.id,
+                  userId: exchange.user_id,
+                  userName: userData?.name || 'Usuário Desconhecido',
+                  userRegistration: userData?.registration || 'N/A',
+                  label: exchange.label,
+                  type: exchange.type,
+                  status: exchange.status,
+                  notes: exchange.notes || undefined,
+                  createdAt: exchange.created_at,
+                  updatedAt: exchange.updated_at || undefined,
+                  updatedBy: exchange.updated_by || undefined,
+                  items: [] // Troca sem itens
+                };
+              }
+              
+              console.log(`Encontrados ${itemsData.length} itens para a troca ${exchange.id}`);
+              
+              // Para cada item, buscar as fotos
+              console.log(`Buscando fotos para os itens da troca ${exchange.id}...`);
+              const itemsWithPhotos = await Promise.all(
+                itemsData.map(async (item) => {
+                  const { data: photosData, error: photosError } = await supabase
+                    .from('exchange_photos')
+                    .select('photo_url')
+                    .eq('exchange_item_id', item.id);
+                    
+                  if (photosError) {
+                    console.error(`Erro ao buscar fotos do item ${item.id}:`, photosError);
+                    return {
+                      id: item.id,
+                      productId: item.product_id,
+                      quantity: item.quantity,
+                      reason: item.reason,
+                      photos: []
+                    };
+                  }
+                  
+                  if (!photosData || photosData.length === 0) {
+                    console.warn(`Item ID: ${item.id} não possui fotos`);
+                  }
+                  
+                  return {
+                    id: item.id,
+                    productId: item.product_id,
+                    quantity: item.quantity,
+                    reason: item.reason,
+                    photos: photosData ? photosData.map(photo => photo.photo_url) : []
+                  };
+                })
+              );
+              
+              // Filtrar itens nulos
+              const validItems = itemsWithPhotos.filter(Boolean) as ExchangeItem[];
+              
+              // Mapear para o formato da aplicação
               return {
                 id: exchange.id,
                 userId: exchange.user_id,
@@ -192,73 +292,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 createdAt: exchange.created_at,
                 updatedAt: exchange.updated_at || undefined,
                 updatedBy: exchange.updated_by || undefined,
-                items: [] // Troca sem itens
+                items: validItems
               };
-            }
-            
-            console.log(`Encontrados ${itemsData.length} itens para a troca ${exchange.id}`);
-            
-            // Para cada item, buscar as fotos
-            console.log(`Buscando fotos para os itens da troca ${exchange.id}...`);
-            const itemsWithPhotos = await Promise.all(
-              itemsData.map(async (item) => {
-                const { data: photosData, error: photosError } = await supabase
-                  .from('exchange_photos')
-                  .select('photo_url')
-                  .eq('exchange_item_id', item.id);
-                  
-                if (photosError) {
-                  console.error(`Erro ao buscar fotos do item ${item.id}:`, photosError);
-                  return {
-                    id: item.id,
-                    productId: item.product_id,
-                    quantity: item.quantity,
-                    reason: item.reason,
-                    photos: []
-                  };
-                }
-                
-                if (!photosData || photosData.length === 0) {
-                  console.warn(`Item ID: ${item.id} não possui fotos`);
-                }
-                
-                return {
-                  id: item.id,
-                  productId: item.product_id,
-                  quantity: item.quantity,
-                  reason: item.reason,
-                  photos: photosData ? photosData.map(photo => photo.photo_url) : []
-                };
-              })
-            );
-            
-            // Filtrar itens nulos
-            const validItems = itemsWithPhotos.filter(Boolean) as ExchangeItem[];
-            
-            // Mapear para o formato da aplicação
-            return {
-              id: exchange.id,
-              userId: exchange.user_id,
-              userName: userData?.name || 'Usuário Desconhecido',
-              userRegistration: userData?.registration || 'N/A',
-              label: exchange.label,
-              type: exchange.type,
-              status: exchange.status,
-              notes: exchange.notes || undefined,
-              createdAt: exchange.created_at,
-              updatedAt: exchange.updated_at || undefined,
-              updatedBy: exchange.updated_by || undefined,
-              items: validItems
-            };
-          })
-        );
-        
-        // Filtrar trocas inválidas
-        const validExchanges = mappedExchanges.filter(Boolean) as Exchange[];
-        console.log(`Total de trocas/quebras válidas encontradas: ${validExchanges.length}`);
-        setExchanges(validExchanges);
-        
-        console.log('========== FIM DA BUSCA DE TROCAS/QUEBRAS ==========');
+            })
+          );
+          
+          // Filtrar trocas inválidas
+          const validExchanges = mappedExchanges.filter(Boolean) as Exchange[];
+          console.log(`Total de trocas/quebras válidas encontradas: ${validExchanges.length}`);
+          setExchanges(validExchanges);
+          
+          console.log('========== FIM DA BUSCA DE TROCAS/QUEBRAS ==========');
+        } catch (error) {
+          console.error('Erro ao carregar registros de trocas:', error);
+          console.trace('Stack trace completo:');
+          toast.error('Erro ao carregar registros de trocas. Tente novamente mais tarde.');
+        }
       } catch (error) {
         console.error('Erro ao carregar registros de trocas:', error);
         console.trace('Stack trace completo:');
@@ -329,7 +378,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw new Error('Apenas administradores podem adicionar produtos');
       }
 
+      // Verificação adicional de sessão
+      console.log('Verificando sessão antes de adicionar produto...');
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('Erro ao verificar sessão:', sessionError);
+        throw new Error('Erro ao verificar sua sessão. Tente fazer login novamente.');
+      }
+      
+      if (!sessionData.session) {
+        console.error('Sessão inválida ou expirada');
+        throw new Error('Sua sessão expirou. Por favor, faça login novamente.');
+      }
+      
+      console.log('Sessão válida encontrada:', sessionData.session.user.id);
       console.log('Iniciando requisição ao Supabase para adicionar produto');
+      
+      // Inserir produto no Supabase com timeout mais longo e verificação detalhada de erros
+      console.log('Enviando dados para o Supabase:', {
+        name: product.name,
+        code: product.code,
+        capacity: product.capacity
+      });
       
       // Inserir produto no Supabase com timeout mais longo
       const { data, error } = await Promise.race([
@@ -373,6 +444,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.log('Produto adicionado com sucesso:', data);
         const newProduct = mappers.mapProductFromDB(data);
         setProducts(prev => [...prev, newProduct]);
+        
+        // Tentar buscar produtos novamente para garantir sincronização
+        console.log('Atualizando lista de produtos após adição...');
+        try {
+          const { data: refreshData, error: refreshError } = await supabase
+            .from('products')
+            .select('*')
+            .order('name');
+            
+          if (refreshError) {
+            console.error('Erro ao atualizar lista de produtos:', refreshError);
+          } else if (refreshData) {
+            console.log(`Lista atualizada: ${refreshData.length} produtos encontrados`);
+            const mappedProducts = refreshData.map(mappers.mapProductFromDB);
+            setProducts(mappedProducts);
+          }
+        } catch (refreshError) {
+          console.error('Erro ao atualizar lista de produtos:', refreshError);
+        }
+        
         toast.success('Produto adicionado com sucesso');
       } else {
         console.error('Erro: Produto não foi adicionado (sem dados retornados)');
@@ -1188,6 +1279,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const reloadProducts = async () => {
+    try {
+      console.log('Solicitação explícita para recarregar produtos');
+      // Recarregar produtos do Supabase
+      await fetchProducts();
+      toast.success('Lista de produtos atualizada');
+    } catch (error) {
+      console.error('Erro ao recarregar produtos:', error);
+      toast.error('Erro ao recarregar produtos');
+    }
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -1198,6 +1301,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getProduct,
         exportProductsToCSV,
         importProductsFromCSV,
+        reloadProducts,
         
         exchanges,
         addExchange,
