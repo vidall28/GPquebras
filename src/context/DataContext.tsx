@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from '@/lib/toast';
-import { supabase, User, Tables, mappers, Exchange, Product, getCachedOrFetch, clearCache } from '@/lib/supabase';
+import { supabase, User, Tables, mappers, Exchange, Product } from '@/lib/supabase';
+import { getCachedOrFetch, clearCache } from '@/lib/cache';
 import { useAuth } from './AuthContext';
 
 // Define interfaces

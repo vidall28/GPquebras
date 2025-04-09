@@ -370,4 +370,51 @@ export const clearCache = (key?: string) => {
     
     console.log(`${keysToRemove.length} caches limpos`);
   }
+};
+
+// Função para obter dados com cache
+export const getCachedOrFetch = async <T>(
+  key: string, 
+  fetchFn: () => Promise<T>, 
+  expirySeconds = 60
+): Promise<T> => {
+  // Prefixo padrão para as chaves de cache
+  const cacheKey = `cache_${key}`;
+  
+  try {
+    // Verificar se há dados em cache
+    const cachedData = localStorage.getItem(cacheKey);
+    
+    if (cachedData) {
+      try {
+        const { data, expiry } = JSON.parse(cachedData);
+        
+        // Verificar se o cache ainda é válido
+        if (expiry > Date.now()) {
+          console.log(`Usando dados em cache para "${key}"`);
+          return data as T;
+        }
+        
+        console.log(`Cache para "${key}" expirado`);
+      } catch (parseError) {
+        console.error(`Erro ao analisar cache para "${key}":`, parseError);
+        localStorage.removeItem(cacheKey);
+      }
+    }
+    
+    // Se não houver cache válido, buscar dados
+    console.log(`Buscando dados frescos para "${key}"`);
+    const freshData = await fetchFn();
+    
+    // Armazenar em cache
+    localStorage.setItem(cacheKey, JSON.stringify({
+      data: freshData,
+      expiry: Date.now() + (expirySeconds * 1000)
+    }));
+    
+    return freshData;
+  } catch (error) {
+    console.error(`Erro ao buscar/armazenar dados para "${key}":`, error);
+    throw error;
+  }
 }; 
