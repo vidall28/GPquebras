@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from '@/lib/toast';
-import { supabase, User, Tables, mappers, Exchange, Product, getCachedOrFetch } from '@/lib/supabase';
+import { supabase, User, Tables, mappers, Exchange, Product, getCachedOrFetch, clearCache } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
 
 // Define interfaces
@@ -51,6 +51,7 @@ interface DataContextType {
   updateExchange: (id: string, status: 'pending' | 'approved' | 'rejected', notes?: string, updatedBy?: string) => Promise<void>;
   deleteExchange: (id: string) => Promise<void>;
   getExchange: (id: string) => Exchange | undefined;
+  fetchExchanges: (forceRefresh?: boolean) => Promise<void>;
   
   // Users (only for admin)
   users: User[];
@@ -117,7 +118,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isAuthenticated, user]);
 
   // Carregar exchanges do Supabase
-  const fetchExchanges = async () => {
+  const fetchExchanges = async (forceRefresh = false) => {
     if (!user) {
       console.log('Não há usuário autenticado, ignorando fetchExchanges');
       return;
@@ -127,6 +128,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     try {
       const cacheKey = isAdmin ? 'all_exchanges' : `user_exchanges_${user.id}`;
+      
+      // Forçar limpeza de cache se solicitado
+      if (forceRefresh) {
+        console.log('Forçando atualização e limpando cache');
+        clearCache(cacheKey);
+      }
       
       // Buscar dados com cache baseado no perfil do usuário
       const result = await getCachedOrFetch(cacheKey, async () => {
@@ -142,6 +149,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           `);
           
         // Filtrar por usuário se não for admin
+        // Removendo o filtro por usuário para administradores
+        // Isso permitirá que as políticas RLS do banco determinem a visibilidade dos registros
         if (!isAdmin) {
           query = query.eq('user_id', user.id);
         }
@@ -149,11 +158,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Ordenar por data de criação (mais recentes primeiro)
         query = query.order('created_at', { ascending: false });
         
+        console.log('Consultando trocas/quebras. Usuário é admin?', isAdmin);
         const { data, error } = await query;
         
         if (error) {
+          console.error('Erro ao buscar trocas/quebras:', error);
           throw error;
         }
+        
+        console.log(`Encontradas ${data?.length || 0} trocas/quebras`);
+        console.log('Dados brutos das trocas:', data);
         
         // Processar os dados para o formato da aplicação
         const processedExchanges: Exchange[] = data?.map(exchange => {
@@ -270,6 +284,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     fetchUsers();
   }, [user]);
+
+  // Efeito para carregar trocas quando o usuário muda ou o isAdmin muda
+  useEffect(() => {
+    if (user) {
+      console.log('Usuário autenticado, carregando trocas/quebras...');
+      // Forçar atualização para garantir dados atualizados
+      fetchExchanges(true);
+    }
+  }, [user, isAdmin]); // Adicionamos isAdmin para recarregar quando o status de admin mudar
 
   // Products methods
   const addProduct = async (product: Omit<Product, 'id'>) => {
@@ -1226,6 +1249,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateExchange,
         deleteExchange,
         getExchange,
+        fetchExchanges,
         
         users,
         updateUserStatus,

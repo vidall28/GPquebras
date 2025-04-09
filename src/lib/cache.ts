@@ -338,4 +338,36 @@ export const getCachedUserExchanges = async (userId: string, forceRefresh = fals
     },
     { ttl: 120 } // 2 minutos
   );
+};
+
+// Função para limpar cache específico ou todos os caches
+export const clearCache = (key?: string) => {
+  if (key) {
+    // Limpar cache específico
+    localStorage.removeItem(`cache_${key}`);
+    console.log(`Cache '${key}' limpo`);
+  } else {
+    // Limpar todos os caches relacionados a exchanges
+    const keysToRemove: string[] = [];
+    
+    // Encontrar todas as chaves de cache relacionadas
+    for (let i = 0; i < localStorage.length; i++) {
+      const storageKey = localStorage.key(i);
+      if (storageKey && (
+          storageKey.startsWith('cache_all_exchanges') || 
+          storageKey.startsWith('cache_user_exchanges_') ||
+          storageKey === 'cache_users_info'
+        )) {
+        keysToRemove.push(storageKey);
+      }
+    }
+    
+    // Remover as chaves encontradas
+    keysToRemove.forEach(k => {
+      localStorage.removeItem(k);
+      console.log(`Cache '${k}' limpo`);
+    });
+    
+    console.log(`${keysToRemove.length} caches limpos`);
+  }
 }; 

@@ -943,4 +943,7 @@ export const countUnreadNotifications = async (userId?: string): Promise<Notific
       error: error instanceof Error ? error : new Error(String(error))
     };
   }
-}; 
+};
+
+// Re-exportação da função de cache e clearCache
+export { getCachedOrFetch, clearCache } from './cache'; 
