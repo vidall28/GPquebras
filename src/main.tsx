@@ -39,6 +39,14 @@ if (typeof window !== 'undefined') {
     };
   }
 
+  // Adicionar polyfill para tv que está causando erro
+  if (typeof (window as any).tv !== 'function') {
+    (window as any).tv = function() {
+      console.warn('Função tv chamada mas não implementada');
+      return null;
+    };
+  }
+
   // Garantir que React e ReactDOM estejam disponíveis globalmente
   // Algumas bibliotecas de terceiros podem depender disso
   (window as any).React = React;
@@ -47,73 +55,86 @@ if (typeof window !== 'undefined') {
 
 // Tratamento de erros a nível de window para tipos específicos de erros
 window.addEventListener('error', (event) => {
-  // Verificar se o erro já foi capturado para evitar loops
+  // Verificar se já estamos tratando um erro para evitar loops
   if (localStorage.getItem('error_handling_in_progress') === 'true') {
     return;
   }
-
-  // Verificar se é um erro de função não definida (comum em código minificado)
-  const errorMsg = event.error?.toString() || '';
-  const isFunctionNotDefinedError = errorMsg.match(/[A-Za-z]m is not a function/);
   
-  if (isFunctionNotDefinedError) {
-    console.error('Erro específico detectado:', errorMsg);
-    console.error('Tentando recuperação...');
+  try {
+    const errorMsg = event.error?.toString() || '';
+    const isFunctionNotDefinedError = errorMsg.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
     
-    // Marcar que estamos tratando um erro para evitar loops
-    localStorage.setItem('error_handling_in_progress', 'true');
-    
-    // Armazenar no localStorage que estamos em modo de recuperação
-    localStorage.setItem('recovery_mode', 'true');
-    localStorage.setItem('last_error', errorMsg);
-    
-    // Extrair o nome da função do erro
-    const functionMatch = errorMsg.match(/([A-Za-z]m) is not a function/);
-    if (functionMatch && functionMatch[1]) {
-      const functionName = functionMatch[1];
-      console.log(`Tentando criar polyfill para ${functionName}`);
+    if (isFunctionNotDefinedError) {
+      console.error('Erro específico detectado:', errorMsg);
+      console.error('Tentando recuperação...');
       
-      // Criar dinamicamente o polyfill para a função específica
-      try {
-        (window as any)[functionName] = function() { 
-          console.log(`${functionName} polyfill chamado`); 
-          return null; 
-        };
-      } catch (e) {
-        console.error('Falha ao criar polyfill:', e);
+      // Marcar que estamos tratando um erro para evitar loops
+      localStorage.setItem('error_handling_in_progress', 'true');
+      
+      // Salvar o erro para referência
+      localStorage.setItem('last_error', errorMsg);
+      
+      // Extrair o nome da função que não está definida (por exemplo: Qm, Zm, Jm, tv)
+      const functionMatch = errorMsg.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
+      const functionName = functionMatch ? functionMatch[1] : '';
+      
+      if (functionName) {
+        console.log(`Tentando criar polyfill para ${functionName}`);
+        
+        // Criar dinamicamente o polyfill para a função específica
+        try {
+          (window as any)[functionName] = function() { 
+            console.log(`${functionName} polyfill chamado`); 
+            return null; 
+          };
+        } catch (e) {
+          console.error('Falha ao criar polyfill:', e);
+        }
       }
-    }
-    
-    // Forçar recarregamento ou redirecionar
-    const lastRecovery = localStorage.getItem('last_recovery_timestamp');
-    const now = Date.now();
-    
-    if (!lastRecovery || (now - parseInt(lastRecovery, 10)) > 10000) {
-      localStorage.setItem('last_recovery_timestamp', now.toString());
       
-      // Em vez de redirecionar, recarregamos a página
-      window.location.reload();
-    } else {
-      // Se tentou recuperar recentemente sem sucesso, redirecionar para tela segura
-      console.error('Múltiplas tentativas de recuperação falhas. Redirecionando para página segura...');
-      localStorage.removeItem('error_handling_in_progress');
-      localStorage.setItem('recovery_mode', 'true');
-      window.location.href = '/diagnostico?error=critical&cause=' + encodeURIComponent(errorMsg);
+      // Forçar recarregamento ou redirecionar
+      const lastRecovery = localStorage.getItem('last_recovery_timestamp');
+      const now = Date.now();
+      
+      if (!lastRecovery || (now - parseInt(lastRecovery, 10)) > 10000) {
+        localStorage.setItem('last_recovery_timestamp', now.toString());
+        
+        // Em vez de redirecionar, recarregamos a página
+        window.location.reload();
+      } else {
+        // Se tentou recuperar recentemente sem sucesso, redirecionar para tela segura
+        console.error('Múltiplas tentativas de recuperação falhas. Redirecionando para página segura...');
+        localStorage.removeItem('error_handling_in_progress');
+        localStorage.setItem('recovery_mode', 'true');
+        window.location.href = '/diagnostico?error=critical&cause=' + encodeURIComponent(errorMsg);
+      }
+      
+      // Impedir a propagação do erro
+      event.preventDefault();
+      return false;
     }
-    
-    // Impedir a propagação do erro
-    event.preventDefault();
-    return false;
+  } catch (e) {
+    console.error('Erro ao processar erro:', e);
   }
 });
 
 // Adicionar funções de polyfill ao React para evitar o erro
+console.log('Adicionando polyfills ao React e ReactDOM...');
 try {
   if (window.React && !window.React.Qm) {
     window.React.Qm = function() { return null; };
   }
+  
+  if (window.React && !window.React.tv) {
+    window.React.tv = function() { return null; };
+  }
+  
   if (window.ReactDOM && !window.ReactDOM.Qm) {
     window.ReactDOM.Qm = function() { return null; };
+  }
+  
+  if (window.ReactDOM && !window.ReactDOM.tv) {
+    window.ReactDOM.tv = function() { return null; };
   }
 } catch (e) {
   console.error('Erro ao adicionar polyfills:', e);
