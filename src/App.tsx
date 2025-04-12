@@ -166,53 +166,95 @@ const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   return <>{children}</>;
 };
 
-// Componente de conteúdo da aplicação com rotas (SIMPLIFICADO PARA DEBUG)
+// Componente de conteúdo da aplicação (RESTAURANDO LAYOUT E PROTEÇÃO, PÁGINAS SIMPLES)
 const AppContent = () => (
   <Router>
-      {/* AuthProvider e DataProvider ainda necessários para o contexto */}
       <AuthProvider>
         <DataProvider>
           <Toaster />
           <Sonner />
           <Routes>
-            {/* Rota de Login Simples */}
-            <Route path="/login" element={<div>Página de Login Simples</div>} />
+            {/* Public Routes */}
+            <Route path="/login" element={
+              <ErrorBoundary>
+                <Login /> {/* Manter Login real */}
+              </ErrorBoundary>
+            } />
+             <Route path="/register" element={
+              <ErrorBoundary>
+                <Register /> {/* Manter Register real */}
+              </ErrorBoundary>
+            } />
+            <Route path="/diagnostico" element={<DiagnosticsPage />} />
 
-            {/* Rota de Dashboard Simples (sem proteção) */}
-            <Route path="/dashboard" element={<div>Página de Dashboard Simples</div>} />
+            {/* Redirecionamento da Raiz - Tratado dentro da rota protegida agora */}
+            {/* <Route path="/" element={<Navigate to="/dashboard" replace />} /> */}
 
-             {/* Rota de Diagnóstico (mantida) */}
-             <Route path="/diagnostico" element={<DiagnosticsPage />} />
-
-            {/* Redirecionamento inicial (pode ser uma causa, verificar) */}
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-            {/* Rota Catch-all para Not Found (mantida) */}
-            <Route path="*" element={<div>404 - Página Não Encontrada</div>} />
-
-            {/* ---- ROTAS PROTEGIDAS E LAYOUT REMOVIDOS TEMPORARIAMENTE ----
-            <Route path="/" element={
-              <ProtectedRoute>
-                <ErrorBoundary>
-                  <AppLayout />
-                </ErrorBoundary>
-              </ProtectedRoute>
-            }>
+            {/* Protected Routes com AppLayout (RESTAURADO) */}
+            <Route
+              path="/" // Rota pai para todas as rotas autenticadas
+              element={
+                <ProtectedRoute> { /* Proteger o AppLayout */}
+                  <ErrorBoundary>
+                    <AppLayout />
+                  </ErrorBoundary>
+                </ProtectedRoute>
+              }
+            >
+              {/* Rotas aninhadas (filhas do AppLayout) - MANTIDAS SIMPLES POR ENQUANTO */}
               <Route
-                index
+                index // Rota padrão -> dashboard
                 element={<Navigate to="dashboard" replace />}
               />
               <Route
                 path="dashboard"
+                element={<div>Dashboard Simples (Dentro do Layout)</div>}
+              />
+              <Route
+                path="record"
+                 element={<div>Registro Simples (Dentro do Layout)</div>}
+              />
+              <Route
+                path="history"
+                element={<div>Histórico Simples (Dentro do Layout)</div>}
+              />
+              <Route
+                path="approvals"
+                element={<div>Aprovações Simples (Dentro do Layout)</div>}
+              />
+              {/* Rota Admin Simples */}
+              <Route
+                path="products"
                 element={
-                    <ErrorBoundary>
-                      <Dashboard />
-                    </ErrorBoundary>
+                  <AdminRoute>
+                    <div>Produtos Simples (Admin - Dentro do Layout)</div>
+                  </AdminRoute>
                 }
               />
-             // ... outras rotas protegidas ...
+               {/* Rota Admin Simples */}
+              <Route
+                path="users"
+                element={
+                  <AdminRoute>
+                    <div>Usuários Simples (Admin - Dentro do Layout)</div>
+                  </AdminRoute>
+                }
+              />
+              {/* Rota Protegida Simples */}
+              <Route
+                path="reports"
+                element={<div>Relatórios Simples (Dentro do Layout)</div>}
+              />
+               {/* Rota Protegida Simples */}
+              <Route
+                path="notifications"
+                 element={<div>Notificações Simples (Dentro do Layout)</div>}
+              />
+              {/* Adicione outras rotas simples aqui se necessário */}
             </Route>
-            ---- FIM DAS ROTAS REMOVIDAS ---- */}
+
+            {/* Rota Catch-all para Not Found (mantida) */}
+            <Route path="*" element={<NotFound />} />
           </Routes>
         </DataProvider>
       </AuthProvider>
