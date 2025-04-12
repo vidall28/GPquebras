@@ -55,6 +55,69 @@ const LoadingScreen = ({ message }: { message: string }) => (
   </div>
 );
 
+// Componente de recuperação para erros críticos
+const RecoveryMode = () => {
+  const clearAndReload = () => {
+    localStorage.removeItem('recovery_mode');
+    const authToken = localStorage.getItem('sb-auth-token');
+    localStorage.clear();
+    if (authToken) {
+      localStorage.setItem('sb-auth-token', authToken);
+    }
+    window.location.reload();
+  };
+  
+  const clearAndLogout = () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    window.location.href = '/login';
+  };
+  
+  const goToDiagnostics = () => {
+    window.location.href = '/diagnostico';
+  };
+  
+  const errorInfo = localStorage.getItem('last_error') || 'Erro desconhecido';
+  
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-background p-4">
+      <div className="w-full max-w-md p-6 bg-white border rounded-lg shadow-lg">
+        <h1 className="text-2xl font-bold mb-2 text-destructive">Modo de Recuperação</h1>
+        <p className="mb-4 text-muted-foreground">
+          Detectamos um problema ao renderizar a aplicação. Escolha uma opção abaixo:
+        </p>
+        
+        <div className="bg-muted p-3 rounded text-xs mb-4">
+          <p className="font-mono break-all">{errorInfo}</p>
+        </div>
+        
+        <div className="space-y-2">
+          <button 
+            className="w-full px-4 py-2 bg-primary text-white rounded hover:bg-primary/90"
+            onClick={clearAndReload}
+          >
+            Limpar Cache e Recarregar
+          </button>
+          
+          <button 
+            className="w-full px-4 py-2 bg-secondary text-primary rounded hover:bg-secondary/90"
+            onClick={goToDiagnostics}
+          >
+            Página de Diagnóstico
+          </button>
+          
+          <button 
+            className="w-full px-4 py-2 bg-destructive text-white rounded hover:bg-destructive/90"
+            onClick={clearAndLogout}
+          >
+            Sair e Reconectar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Componente para rota protegida
 const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const auth = useAuth();
@@ -91,7 +154,7 @@ const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   return <>{children}</>;
 };
 
-// Componente de conteúdo da aplicação envolvido pelo ErrorBoundary
+// Componente de conteúdo da aplicação com rotas
 const AppContent = () => (
   <Router>
     <AuthProvider>
@@ -100,20 +163,34 @@ const AppContent = () => (
         <Sonner />
         <Routes>
           {/* Public Routes */}
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/login" element={
+            <ErrorBoundary>
+              <Login />
+            </ErrorBoundary>
+          } />
+          <Route path="/register" element={
+            <ErrorBoundary>
+              <Register />
+            </ErrorBoundary>
+          } />
           <Route path="/diagnostico" element={<DiagnosticsPage />} />
           
           {/* Redirect root to login or dashboard based on auth */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           
-          {/* Protected Routes */}
-          <Route path="/" element={<AppLayout />}>
+          {/* Protected Routes com ErrorBoundary para o AppLayout */}
+          <Route path="/" element={
+            <ErrorBoundary>
+              <AppLayout />
+            </ErrorBoundary>
+          }>
             <Route 
               path="dashboard" 
               element={
                 <ProtectedRoute>
-                  <Dashboard />
+                  <ErrorBoundary>
+                    <Dashboard />
+                  </ErrorBoundary>
                 </ProtectedRoute>
               } 
             />
@@ -121,7 +198,9 @@ const AppContent = () => (
               path="record" 
               element={
                 <ProtectedRoute>
-                  <RecordExchange />
+                  <ErrorBoundary>
+                    <RecordExchange />
+                  </ErrorBoundary>
                 </ProtectedRoute>
               } 
             />
@@ -183,11 +262,26 @@ const AppContent = () => (
   </Router>
 );
 
+// Componente principal com verificação de modo de recuperação
+const SafeAppContent = () => {
+  // Verificar se estamos em modo de recuperação
+  const isRecoveryMode = localStorage.getItem('recovery_mode') === 'true';
+  
+  // Em modo de recuperação, mostrar interface simplificada
+  if (isRecoveryMode) {
+    return <RecoveryMode />;
+  }
+  
+  // Renderização normal se não estiver em modo de recuperação
+  return <AppContent />;
+};
+
+// Componente principal da aplicação
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <ErrorBoundary>
-        <AppContent />
+        <SafeAppContent />
       </ErrorBoundary>
     </TooltipProvider>
   </QueryClientProvider>
