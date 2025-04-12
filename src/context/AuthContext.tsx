@@ -96,331 +96,63 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // Initialize as true
   const navigate = useNavigate();
 
-  // Verifica a sessão do usuário ao carregar
+  // Principal listener para estado de autenticação
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        setIsLoading(true);
-        console.log("Verificando sessão do usuário...");
-        
-        // Verificar se o usuário já está autenticado no Supabase
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError) {
-          console.error("Erro ao obter sessão:", sessionError);
-          setIsLoading(false);
-          return;
-        }
-        
-        console.log("Sessão atual:", session ? "Autenticado" : "Não autenticado");
-        
-        if (session) {
-          console.log("Usuário autenticado, buscando dados...", session.user.id);
-          
-          // MODIFICAÇÃO: Adicionar timeout para evitar ficar preso na busca de dados
+    console.log("Configurando listener onAuthStateChange...");
+    setIsLoading(true); // Set loading true when listener setup begins
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`Evento de autenticação: ${event}${session ? ' com sessão' : ''}`);
+
+      if (event === 'SIGNED_OUT') {
+        console.log("Evento SIGNED_OUT recebido, limpando usuário.");
+        setUser(null);
+        setIsLoading(false);
+        // O logout() já navega, não precisa aqui
+        return;
+      }
+
+      if (session) {
+        console.log(`Usuário autenticado (evento ${event}), ID: ${session.user.id}`);
+        // Tentar buscar dados detalhados do usuário
+        console.log(`Buscando dados detalhados do usuário após evento ${event}...`);
+        // Não setar loading true aqui novamente, já está true desde o início do listener
+        try {
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário na verificação da sessão')), 12000)
+            setTimeout(() => reject(new Error('Timeout (10s) ao buscar dados do usuário no onAuthStateChange')), 10000)
           );
           
-          try {
-            // Buscar os dados do usuário da tabela 'users'
-            const userDataPromise = supabase
-              .from('users')
-              .select('*')
-              .eq('id', session.user.id)
-              .single();
-              
-            // Usar Race para evitar ficar preso se a consulta não responder
-            const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
-              
-            if (userError) {
-              console.error('Erro ao buscar dados do usuário:', userError);
-              throw userError; // Passar para o tratamento de erro abaixo
-            }
-            
-            if (userData) {
-              console.log('Dados do usuário carregados da sessão:', userData);
-              
-              // MODIFICAÇÃO: Não substituir automaticamente o nome do usuário
-              // Apenas verificar se o nome está vazio
-              if (!userData.name || userData.name.trim() === '') {
-                console.warn('Nome do usuário está vazio na sessão iniciada');
-                
-                // Obter metadados do usuário para verificar o nome correto
-                const { data: authUser } = await supabase.auth.getUser();
-                const correctName = authUser?.user?.user_metadata?.name || 'Novo Usuário';
-                
-                // Atualizar o nome apenas se estiver realmente vazio
-                const { error: updateError } = await supabase
-                  .from('users')
-                  .update({ name: correctName })
-                  .eq('id', userData.id);
-                  
-                if (updateError) {
-                  console.error('Erro ao atualizar nome do usuário na sessão:', updateError);
-                } else {
-                  userData.name = correctName;
-                  console.log('Nome do usuário atualizado para:', correctName);
-                }
-              }
-              
-              const currentUser: User = {
-                id: userData.id,
-                name: userData.name,
-                registration: userData.registration,
-                email: userData.email,
-                role: userData.role,
-                status: userData.status
-              };
-              
-              console.log("Definindo usuário no estado:", currentUser);
-              setUser(currentUser);
-            } else {
-              console.warn("Sessão encontrada, mas dados do usuário não existem na tabela users");
-              throw new Error('Usuário não encontrado na tabela users'); // Passar para tratamento de erro
-            }
-          } catch (userFetchError) {
-            // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA quando há problema na busca dos dados
-            console.error('Erro ou timeout ao buscar dados do usuário:', userFetchError);
-            console.log('Aplicando solução de contingência para manter a sessão ativa');
-            
-            // Verificar se já estamos tentando criar um usuário de contingência
-            const isContingencyInProgress = localStorage.getItem('auth_contingency_in_progress');
-            
-            if (isContingencyInProgress) {
-              console.log('Processo de contingência já em andamento, evitando duplicação');
-            } else {
-              // Marcar que estamos em processo de contingência
-              localStorage.setItem('auth_contingency_in_progress', 'true');
-              
-              // Verificar se o usuário é administrador através do RPC (usando a função importada)
-              let adminStatusFromRpc = false;
-              try {
-                // Usar a função checkIfUserIsAdmin importada
-                adminStatusFromRpc = await checkIfUserIsAdmin(session.user.id);
-                if (adminStatusFromRpc) {
-                  console.log("Confirmação de admin obtida via RPC is_admin");
-                }
-              } catch (rpcError) {
-                console.error("Erro ao verificar status de admin via RPC:", rpcError);
-              }
-              
-              // Obter dados básicos do usuário diretamente do Auth
-              const { data: authUser } = await supabase.auth.getUser();
-              
-              if (authUser?.user) {
-                // Verificar metadados para administrador
-                const userMetadata = authUser.user.user_metadata || {};
-                const isAdminInMetadata = userMetadata.role === 'admin';
-                
-                // Determinar se é admin com base nas verificações restantes
-                const shouldBeAdmin = isAdminInMetadata || adminStatusFromRpc;
-                
-                // Criar usuário mínimo com os dados disponíveis
-                const fallbackUser: User = {
-                  id: session.user.id,
-                  name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'Usuário',
-                  registration: authUser.user.user_metadata?.registration || '00000000',
-                  email: authUser.user.email || '',
-                  role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
-                  status: 'active'
-                };
-                
-                console.log('Definindo usuário de contingência:', fallbackUser);
-                setUser(fallbackUser);
-                
-                // Garantir que temos um ID definido antes de prosseguir
-                if (!fallbackUser.id) {
-                  console.error('ID do usuário não está definido, não é possível salvar na tabela users');
-                  setUser(fallbackUser);
-                  return;
-                }
-
-                // 4. Tenta inserir ou atualizar o usuário na tabela de usuários
-                try {
-                  console.log("Tentando criar/atualizar registro na tabela users para evitar problemas futuros");
-                  console.log("ID do usuário para atualização:", fallbackUser.id);
-                  
-                  // Verificar se o usuário já existe
-                  const { data: existingUser, error: existingUserError } = await supabase
-                    .from('users')
-                    .select('id')
-                    .eq('id', fallbackUser.id)
-                    .single();
-                    
-                  if (existingUserError && !existingUserError.message.includes('No rows found')) {
-                    console.error("Erro ao verificar existência do usuário:", existingUserError);
-                    // Continuar mesmo com erro, para não bloquear o login
-                  }
-                    
-                  if (existingUser) {
-                    // Verificar e registrar todos os campos antes da atualização
-                    console.log("Atualizando usuário existente com dados:", {
-                      id: fallbackUser.id,
-                      name: fallbackUser.name,
-                      email: fallbackUser.email,
-                      role: fallbackUser.role,
-                      status: 'active'
-                    });
-                    
-                    // Atualizar usuário existente
-                    const { error: updateError } = await supabase
-                      .from('users')
-                      .update({
-                        name: fallbackUser.name,
-                        email: fallbackUser.email,
-                        role: fallbackUser.role,
-                        status: 'active'
-                      })
-                      .eq('id', fallbackUser.id);
-                      
-                    if (updateError) {
-                      console.error("Erro ao atualizar usuário:", updateError);
-                    } else {
-                      console.log("Registro de usuário atualizado na tabela users");
-                    }
-                  } else {
-                    // Verificar e registrar todos os campos antes da inserção
-                    console.log("Criando novo usuário com dados:", {
-                      id: fallbackUser.id,
-                      name: fallbackUser.name,
-                      registration: fallbackUser.registration,
-                      email: fallbackUser.email,
-                      role: fallbackUser.role,
-                      status: 'active'
-                    });
-                    
-                    // Criar novo usuário
-                    const { error: insertError } = await supabase
-                      .from('users')
-                      .insert([{
-                        id: fallbackUser.id,
-                        name: fallbackUser.name,
-                        registration: fallbackUser.registration,
-                        email: fallbackUser.email,
-                        role: fallbackUser.role,
-                        status: 'active'
-                      }]);
-                      
-                    if (insertError) {
-                      console.error("Erro ao criar usuário:", insertError);
-                    } else {
-                      console.log("Novo registro de usuário criado na tabela users");
-                    }
-                  }
-                } catch (error) {
-                  console.error("Erro ao criar/atualizar usuário na tabela:", error);
-                }
-              } else {
-                console.error('Falha na solução de contingência: não foi possível obter dados do usuário');
-              }
-              
-              // Remover flag de contingência em andamento após 3 segundos
-              setTimeout(() => {
-                localStorage.removeItem('auth_contingency_in_progress');
-                console.log("Flag de contingência removida");
-              }, 3000);
-            }
-          }
-        } else {
-          console.log("Nenhuma sessão ativa encontrada");
-        }
-      } catch (error) {
-        console.error('Erro ao verificar sessão:', error);
-      } finally {
-        setIsLoading(false);
-        // Remover qualquer flag de contingência remanescente
-        localStorage.removeItem('auth_contingency_in_progress');
-      }
-    };
-    
-    checkSession();
-    
-    // Configurar listener para mudanças na autenticação
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log("Evento de autenticação:", event, session ? "com sessão" : "sem sessão");
-      
-      if (event === 'SIGNED_IN' && session) {
-        console.log("Usuário autenticado, ID:", session.user.id);
-        
-        // MODIFICAÇÃO: Aumentar timeout para 30 segundos para a busca de dados PÓS-EVENTO
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário no evento de autenticação')), 30000) // Aumentado para 30 segundos
-        );
-        
-        try {
-          // Buscar os dados do usuário
-          console.log('Buscando dados detalhados do usuário após evento SIGNED_IN...');
           const userDataPromise = supabase
             .from('users')
             .select('*')
             .eq('id', session.user.id)
             .single();
-            
-          // Usar Race para evitar ficar preso
-          console.log('Aguardando dados do usuário ou timeout de 30s...');
+
           const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
-            
+
           if (userError) {
-            console.error("Erro ao buscar dados do usuário no evento de autenticação:", userError);
-            
-            // Verificar se é um erro de API key e tentar corrigir
-            if (userError.message === 'No API key found in request' || userError.message?.includes('API key')) {
-              console.log("Detectado erro de API key, tentando reinicializar cliente Supabase...");
-              const reset = await resetSupabaseClient();
-              
-              if (reset) {
-                // Se conseguiu reinicializar, tentar buscar os dados novamente
-                console.log("Cliente reinicializado, buscando dados do usuário novamente...");
-                try {
-                  const { data: retryData, error: retryError } = await supabase
-                    .from('users')
-                    .select('*')
-                    .eq('id', session.user.id)
-                    .single();
-                    
-                  if (!retryError && retryData) {
-                    console.log("Dados do usuário recuperados após reinicialização:", retryData);
-                    return retryData;
-                  }
-                } catch (retryErr) {
-                  console.error("Falha na segunda tentativa:", retryErr);
-                }
-              }
+            console.error(`Erro ao buscar dados do usuário (evento ${event}):`, userError);
+            // Se o erro for timeout ou específico, tentar fallback
+            if (userError instanceof Error && userError.message.includes('Timeout')) {
+               toast.error('Servidor demorou a responder. Verificando dados mínimos.');
+            } else {
+               toast.error('Erro ao carregar perfil completo.');
             }
-            
-            throw userError;
+            // Por agora, apenas deslogamos para evitar estado inconsistente
+            console.warn("Falha ao buscar dados do usuário, deslogando para segurança.");
+            await supabase.auth.signOut(); // Força logout
+            setUser(null); 
+            setIsLoading(false);
+            // Considerar não navegar aqui, talvez mostrar mensagem na tela de login
+            // navigate('/login'); 
+            return;
           }
-          
+
           if (userData) {
-            console.log('Dados do usuário carregados do evento de autenticação:', userData);
-            
-            // MODIFICAÇÃO: Não substituir automaticamente o nome do usuário
-            // Apenas verificar se o nome está vazio
-            if (!userData.name || userData.name.trim() === '') {
-              console.warn('Nome do usuário está vazio no evento de autenticação');
-              
-              // Obter metadados do usuário para verificar o nome correto
-              const { data: authUser } = await supabase.auth.getUser();
-              const correctName = authUser?.user?.user_metadata?.name || 'Novo Usuário';
-              
-              // Atualizar o nome apenas se estiver realmente vazio
-              const { error: updateError } = await supabase
-                .from('users')
-                .update({ name: correctName })
-                .eq('id', userData.id);
-                
-              if (updateError) {
-                console.error('Erro ao atualizar nome do usuário no evento:', updateError);
-              } else {
-                userData.name = correctName;
-                console.log('Nome do usuário atualizado para:', correctName);
-              }
-            }
-            
+            console.log(`Dados do usuário carregados do evento de autenticação (${event}):`, userData);
             const currentUser: User = {
               id: userData.id,
               name: userData.name,
@@ -429,179 +161,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: userData.role,
               status: userData.status
             };
-            
-            console.log("Atualizando usuário no estado a partir do evento:", currentUser);
-            setUser(currentUser);
-          } else {
-            console.warn('Dados do usuário não encontrados no evento de autenticação');
-            throw new Error('Usuário não encontrado na tabela users');
-          }
-        } catch (userFetchError) {
-          // MODIFICAÇÃO: SOLUÇÃO DE CONTINGÊNCIA MELHORADA quando há problema na busca dos dados
-          console.error('Erro ou timeout ao buscar dados do usuário no evento:', userFetchError);
-          console.log('Aplicando solução de contingência para o evento de autenticação');
-          
-          // Verificar se já estamos tentando criar um usuário de contingência
-          const isContingencyInProgress = localStorage.getItem('auth_contingency_in_progress');
-          
-          if (isContingencyInProgress) {
-            console.log('Processo de contingência já em andamento, evitando duplicação');
-          } else {
-            // Marcar que estamos em processo de contingência
-            localStorage.setItem('auth_contingency_in_progress', 'true');
-            
-            // Buscar informações adicionais diretamente da sessão e autenticação
-            try {
-              console.log("Tentando buscar dados do usuário direto da sessão e autenticação");
-              
-              // 1. Tentar obter informações dos metadados do usuário na sessão
-              const userMetadata = session.user.user_metadata || {};
-              console.log("Metadados do usuário na sessão:", userMetadata);
-              
-              // 2. Buscar informações adicionais da API de autenticação
-              const { data: authData } = await supabase.auth.getUser();
-              console.log("Dados de autenticação obtidos:", authData?.user?.user_metadata);
-              
-              // 3. Verificar se há alguma indicação de papel de administrador nos metadados
-              // Isso pode variar de acordo com como sua aplicação armazena essas informações
-              const isAdminInMetadata = 
-                (userMetadata.role === 'admin') || 
-                (authData?.user?.user_metadata?.role === 'admin');
-              
-              console.log("Encontrou indicação de administrador nos metadados?", isAdminInMetadata);
-              
-              // 4. Verificar carimbo de administrador em outros sistemas
-              // Tentativa via RPC is_admin
-              let adminStatusFromRpc = false;
-              try {
-                // Usar a função importada checkIfUserIsAdmin
-                adminStatusFromRpc = await checkIfUserIsAdmin(session.user.id);
-                if (adminStatusFromRpc === true) {
-                  console.log("Confirmação de admin obtida via RPC is_admin");
-                }
-              } catch (rpcError) {
-                console.error("Erro ao verificar status de admin via RPC:", rpcError);
-              }
-              
-              // 5. Determinar se o usuário é admin baseado nas verificações restantes
-              const shouldBeAdmin = isAdminInMetadata || adminStatusFromRpc;
-              console.log("Decisão final sobre status de admin:", shouldBeAdmin);
-              
-              // 6. Tenta inserir ou atualizar o usuário na tabela users
-              try {
-                // Criar usuário mínimo com os dados disponíveis
-                const fallbackUser: User = {
-                  id: session.user.id,
-                  name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Usuário',
-                  registration: session.user.user_metadata?.registration || '00000000',
-                  email: session.user.email || '',
-                  role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
-                  status: 'active'
-                };
-                
-                console.log("Tentando criar/atualizar registro na tabela users para usuário de contingência");
-                
-                // Verificar se o usuário já existe
-                const { data: existingUser } = await supabase
-                  .from('users')
-                  .select('id')
-                  .eq('id', fallbackUser.id)
-                  .single();
-                  
-                if (existingUser) {
-                  // Atualizar usuário existente
-                  await supabase
-                    .from('users')
-                    .update({
-                      name: fallbackUser.name,
-                      email: fallbackUser.email,
-                      role: fallbackUser.role,
-                      status: 'active'
-                    })
-                    .eq('id', fallbackUser.id);
-                    
-                  console.log("Registro de usuário atualizado na tabela users");
-                } else {
-                  // Inserir novo usuário
-                  await supabase
-                    .from('users')
-                    .insert([{
-                      id: fallbackUser.id,
-                      name: fallbackUser.name,
-                      registration: fallbackUser.registration,
-                      email: fallbackUser.email,
-                      role: fallbackUser.role,
-                      status: 'active'
-                    }]);
-                    
-                  console.log("Novo registro de usuário criado na tabela users");
-                }
-                
-                console.log('Definindo usuário de contingência a partir do evento:', fallbackUser);
-                setUser(fallbackUser);
-              } catch (dbError) {
-                console.error("Erro ao criar/atualizar usuário na tabela:", dbError);
-                
-                // Mesmo com erro, garantir um fallback mínimo
-                const minimalFallback: User = {
-                  id: session.user.id,
-                  name: session.user.email?.split('@')[0] || 'Usuário',
-                  registration: '00000000',
-                  email: session.user.email || '',
-                  role: shouldBeAdmin ? 'admin' : 'user',
-                  status: 'active'
-                };
-                
-                console.log('Definindo usuário com fallback mínimo:', minimalFallback);
-                setUser(minimalFallback);
-              }
-            } catch (contingencyError) {
-              console.error("Erro na solução de contingência:", contingencyError);
-              
-              // Mesmo com erro, garantir um fallback mínimo
-              const minimalFallback: User = {
-                id: session.user.id,
-                name: session.user.email?.split('@')[0] || 'Usuário',
-                registration: '00000000',
-                email: session.user.email || '',
-                role: 'user',
-                status: 'active'
-              };
-              
-              console.log('Definindo usuário com fallback mínimo:', minimalFallback);
-              setUser(minimalFallback);
+            console.log(`Atualizando usuário no estado a partir do evento (${event}):`, currentUser);
+            // Verifica se o usuário realmente mudou para evitar re-renders desnecessários
+            // Comparação simples (pode precisar ser mais robusta se objetos complexos)
+            if (JSON.stringify(user) !== JSON.stringify(currentUser)) {
+              setUser(currentUser);
             }
-            
-            // Remover flag de contingência em andamento após 3 segundos
-            setTimeout(() => {
-              localStorage.removeItem('auth_contingency_in_progress');
-              console.log("Flag de contingência removida");
-            }, 3000);
+          } else {
+            // Não encontrou usuário na tabela 'users', pode ser um problema
+            console.warn(`Sessão válida (evento ${event}), mas usuário ${session.user.id} não encontrado na tabela 'users'.`);
+            toast.error('Erro de sincronização de dados. Por favor, faça login novamente.');
+            await supabase.auth.signOut();
+            setUser(null);
+            setIsLoading(false);
+            // navigate('/login');
+            return;
           }
+
+        } catch (error) {
+           console.error(`Erro inesperado no listener onAuthStateChange (evento ${event}):`, error);
+           toast.error('Erro inesperado ao verificar sessão.');
+           setUser(null); // Limpa usuário em caso de erro grave
+        } finally {
+          setIsLoading(false); // Garante que loading termina APÓS tentativa de buscar dados
         }
-      } else if (event === 'SIGNED_OUT') {
-        console.log("Evento SIGNED_OUT recebido");
+      } else if (event !== 'INITIAL_SESSION') {
+        // Se não há sessão e não é a sessão inicial
+        console.log(`Evento ${event} sem sessão, garantindo que usuário é nulo.`);
         setUser(null);
-        // Se necessário, limpar outros estados aqui
-        // Não navegar automaticamente, pois o logout() já trata disso
-      } else if (event === 'TOKEN_REFRESHED') {
-        console.log("Token de autenticação atualizado");
-        // Opcional: pode ser útil forçar uma revalidação de dados ou permissões
-      } else if (event === 'PASSWORD_RECOVERY') {
-        console.log("Evento de recuperação de senha");
-        // Geralmente tratado em página específica, mas bom saber que ocorre
-      } else {
-        console.log(`Outro evento de autenticação: ${event}`);
+        setIsLoading(false);
+      } else if (event === 'INITIAL_SESSION') {
+         // Sessão inicial pode ou não ter usuário, se não tiver, termina o loading
+         if (!session) {
+            console.log("Sessão inicial sem usuário logado.")
+            setIsLoading(false);
+         }
+         // Se tiver sessão, o bloco 'if (session)' acima tratará e definirá isLoading = false no finally
       }
     });
-    
+
+    console.log("Listener onAuthStateChange configurado.");
+
     // Limpar subscription quando o componente for desmontado
     return () => {
-      console.log("Limpando subscription de autenticação");
-      subscription.unsubscribe();
-      localStorage.removeItem('auth_contingency_in_progress');
+      console.log("Limpando subscription de autenticação onAuthStateChange");
+      subscription?.unsubscribe();
     };
-  }, []);
+  }, []); // Executa apenas uma vez na montagem
 
   useEffect(() => {
     if (user) {
@@ -615,15 +221,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  // Login function
+  // Login function (simplificada)
   const login = async (email: string, password: string) => {
-    setIsLoading(true);
+    // Iniciar loading aqui
+    setIsLoading(true); 
     localStorage.setItem('login_attempt_timestamp', Date.now().toString());
     
     try {
       console.log(`Iniciando processo de login para: ${email} às ${new Date().toISOString()}`);
       
-      // Limpar qualquer resquício de sessão anterior
+      // Limpar qualquer resquício de sessão anterior (mantido)
       console.log('Limpando dados residuais de sessão anterior');
       try {
         localStorage.removeItem('supabase.auth.token');
@@ -632,188 +239,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('sb-refresh-token');
         localStorage.removeItem('auth_contingency_in_progress');
         console.log('Limpeza de sessão anterior concluída');
-      } catch (e) {
-        console.warn('Erro ao limpar dados de sessão:', e);
-      }
-      
-      // Configuração para persistência da sessão
-      const persistenceOptions = {
-        persistSession: true
-      };
-      
+      } catch (e) { /* ignore */ }
+
+      // Enviar requisição de login para o Supabase
       console.log('Enviando requisição de login para o Supabase...');
-      
-      // Fazer login com timeout para evitar bloqueio indefinido
       const authPromise = supabase.auth.signInWithPassword({
         email: email,
-        password: password
+        password: password,
       });
       
-      // Criar um timeout para a operação de login
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-          console.error('TIMEOUT: A operação de login excedeu o limite de tempo');
-          reject(new Error('Timeout ao fazer login'));
-        }, 15000);
-      });
+      // Aplicar timeout (mantido)
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout (15s) ao fazer login')), 15000));
       
-      // Usar Promise.race para aplicar o timeout
+      // Aguardar resposta
       console.log('Aguardando resposta da autenticação com timeout de 15s...');
       const { data: authData, error: authError } = await Promise.race([
         authPromise,
-        timeoutPromise.then(() => { 
-          throw new Error('Timeout ao fazer login'); 
-        })
+        timeoutPromise
       ]) as any;
       
       console.log('Resposta recebida da autenticação:', 
-                 authData ? 'Autenticação bem-sucedida' : 'Sem dados de autenticação', 
+                 authData?.session ? 'Login bem-sucedido' : 'Sem sessão', 
                  authError ? `Erro: ${authError.message}` : 'Sem erros');
       
-      if (authError || !authData?.user) {
-        console.error('Erro ao fazer login:', authError ? authError.message : 'Usuário indefinido na resposta');
+      // TRATAMENTO DE ERRO NO LOGIN
+      if (authError || !authData?.session) {
+        console.error('Erro ao fazer login:', authError ? authError.message : 'Sessão indefinida na resposta');
         toast.error(`Falha na autenticação: ${authError ? authError.message : 'Resposta inválida do servidor'}`);
-        setIsLoading(false);
-        return;
+        setIsLoading(false); // Define loading false AQUI no erro
+        return; // Sai da função login
       }
       
-      // Log para debugging dos metadados do usuário
-      console.log('Metadados do usuário Auth:', authData.user.user_metadata);
-      console.log('ID do usuário autenticado:', authData.user.id);
-      
-      // ABORDAGEM OTIMIZADA: 
-      // 1. Criar usuário básico com dados garantidos IMEDIATAMENTE
-      // 2. Redirecionar para dashboard imediatamente
-      // 3. Buscar detalhes adicionais em segundo plano
-
-      // Obter informações básicas dos metadados
-      const userMetadata = authData.user.user_metadata || {};
-      const userName = userMetadata.name || userMetadata.full_name || email.split('@')[0];
-      const userRegistration = userMetadata.registration || '000000';
-      
-      // Criar usuário básico com dados GARANTIDOS disponíveis
-      const basicUser: User = {
-        id: authData.user.id,
-        name: userName,
-        registration: userRegistration,
-        email: email,
-        role: 'user', // Inicia como user, verifica admin em background
-        status: 'active'
-      };
-      
-      // IMPORTANTE: Definir o usuário IMEDIATAMENTE para desbloquear a interface
-      console.log('Definindo usuário básico:', basicUser);
-      setUser(basicUser);
-      toast.success('Login realizado com sucesso!');
+      // SUCESSO NO LOGIN (continua no onAuthStateChange)
+      console.log('Login via signIn bem-sucedido. Aguardando onAuthStateChange para atualizar estado.');
+      toast.success('Login realizado com sucesso! Carregando dados...'); 
       localStorage.setItem('login_success_timestamp', Date.now().toString());
-      
-      // CRÍTICO: Redirecionar para o dashboard IMEDIATAMENTE
-      console.log('Iniciando redirecionamento para dashboard...');
-      navigate('/dashboard');
-      
-      // BACKGROUND: Operações adicionais em segundo plano para não bloquear a UI
-      window.setTimeout(async () => {
-        try {
-          console.log('Executando operações em segundo plano...');
-          
-          // 1. Buscar perfil completo do usuário com timeout
-          try {
-            const userPromise = supabase
-              .from('users')
-              .select('*')
-              .eq('id', basicUser.id)
-              .maybeSingle();
-            
-            const userTimeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('Timeout ao buscar perfil')), 5000);
-            });
-            
-            const { data: userData, error: userError } = await Promise.race([
-              userPromise,
-              userTimeoutPromise
-            ]) as any;
-            
-            if (userError) {
-              console.warn('Erro ao buscar perfil do usuário:', userError);
-            } else if (userData) {
-              console.log('Perfil do usuário encontrado:', userData);
-              
-              // Atualizar o state com dados mais completos
-              const updatedUser = {
-                id: userData.id,
-                name: userData.name || basicUser.name,
-                registration: userData.registration || basicUser.registration,
-                email: userData.email || basicUser.email,
-                role: userData.role || basicUser.role,
-                status: userData.status || basicUser.status
-              };
-              
-              setUser(updatedUser);
-              
-              // Se o usuário agora é admin mas não era antes, mostrar mensagem
-              if (updatedUser.role === 'admin' && basicUser.role !== 'admin') {
-                toast.info('Permissões administrativas verificadas e atualizadas');
-              }
-            } else {
-              // Usuário não existe no banco, criar um novo
-              console.log('Perfil não encontrado, criando novo perfil');
-              
-              // Corrigir tratamento de upsertUser (usa try/catch)
-              try {
-                await upsertUser(basicUser);
-                console.log('Perfil criado via upsertUser'); 
-              } catch (createError) {
-                console.warn('Exceção ao criar perfil via upsertUser:', createError);
-                // Poderia adicionar um toast aqui se necessário
-              }
-            }
-          } catch (profileError) {
-            console.warn('Erro na operação de perfil em segundo plano:', profileError);
-          }
-          
-          // 2. Verificar status de admin no banco (AGORA É A ÚNICA VERIFICAÇÃO)
-          try {
-            console.log('Verificando status de admin no banco...');
-            const isAdminInDB = await checkIfUserIsAdmin(basicUser.id);
-            
-            if (isAdminInDB && basicUser.role !== 'admin') {
-              console.log('Usuário identificado como admin no banco');
-              
-              // Atualizar o estado local se for admin
-              setUser(prev => prev ? { ...prev, role: 'admin' } : null);
-              
-              // Atualizar o registro no banco também (opcional, mas bom para consistência)
-              // Pode ser movido para dentro de upsertUser se preferir
-              supabase.from('users').update({ role: 'admin' }).eq('id', basicUser.id).then(({ error }) => {
-                if (error) console.warn("Erro ao atualizar role no DB:", error);
-              });
-              
-              toast.info('Permissões administrativas concedidas');
-            } else if (!isAdminInDB && basicUser.role === 'admin') {
-               // Caso raro: metadados diziam admin, mas DB discorda. Usar DB como verdade.
-               console.warn("Inconsistência: metadados indicavam admin, mas DB discorda. Revertendo para 'user'");
-               setUser(prev => prev ? { ...prev, role: 'user' } : null);
-               supabase.from('users').update({ role: 'user' }).eq('id', basicUser.id).then(({ error }) => {
-                if (error) console.warn("Erro ao reverter role no DB:", error);
-              });
-            }
-          } catch (adminError) {
-            console.warn('Erro ao verificar status de admin:', adminError);
-          }
-          
-        } catch (bgError) {
-          console.warn('Erro geral nas operações em segundo plano:', bgError);
-        } finally {
-          // Garantir que o loading seja desligado
-          setIsLoading(false);
-        }
-      }, 500);
+
     } catch (error) {
       console.error('Erro fatal ao fazer login:', error);
-      
-      // Mensagem de erro mais informativa
       let errorMessage = 'Erro ao realizar login';
-      
       if (error instanceof Error) {
         if (error.message.includes('Timeout')) {
           errorMessage = 'O servidor demorou muito para responder. Verifique sua conexão.';
@@ -823,9 +287,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           errorMessage += ': ' + error.message;
         }
       }
-      
       toast.error(errorMessage);
-      setIsLoading(false);
+      // Definir isLoading como false AQUI também em caso de erro geral
+      setIsLoading(false); 
+    } finally {
+       // Remover setIsLoading(false) daqui.
     }
   };
 
