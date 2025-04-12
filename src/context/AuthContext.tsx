@@ -352,13 +352,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (event === 'SIGNED_IN' && session) {
         console.log("Usuário autenticado, ID:", session.user.id);
         
-        // MODIFICAÇÃO: Aumentar timeout para evitar ficar preso na busca dos dados
+        // MODIFICAÇÃO: Aumentar timeout para 30 segundos para a busca de dados PÓS-EVENTO
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário no evento de autenticação')), 15000)
+          setTimeout(() => reject(new Error('Timeout ao buscar dados do usuário no evento de autenticação')), 30000) // Aumentado para 30 segundos
         );
         
         try {
           // Buscar os dados do usuário
+          console.log('Buscando dados detalhados do usuário após evento SIGNED_IN...');
           const userDataPromise = supabase
             .from('users')
             .select('*')
@@ -366,6 +367,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .single();
             
           // Usar Race para evitar ficar preso
+          console.log('Aguardando dados do usuário ou timeout de 30s...');
           const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
             
           if (userError) {
@@ -591,9 +593,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else if (event === 'SIGNED_OUT') {
-        console.log("Evento de logout detectado");
+        console.log("Evento SIGNED_OUT recebido");
         setUser(null);
-        localStorage.removeItem('auth_contingency_in_progress');
+        // Se necessário, limpar outros estados aqui
+        // Não navegar automaticamente, pois o logout() já trata disso
+      } else if (event === 'TOKEN_REFRESHED') {
+        console.log("Token de autenticação atualizado");
+        // Opcional: pode ser útil forçar uma revalidação de dados ou permissões
+      } else if (event === 'PASSWORD_RECOVERY') {
+        console.log("Evento de recuperação de senha");
+        // Geralmente tratado em página específica, mas bom saber que ocorre
+      } else {
+        console.log(`Outro evento de autenticação: ${event}`);
       }
     });
     
