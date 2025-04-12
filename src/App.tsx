@@ -4,7 +4,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Outlet } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { DataProvider } from "@/context/DataContext";
 import { AppLayout } from "@/components/Layout/AppLayout";
@@ -194,14 +194,18 @@ const AppContent = () => (
             <Route
               path="/" // Rota pai para todas as rotas autenticadas
               element={
-                <ProtectedRoute> { /* Proteger o AppLayout */}
-                  <ErrorBoundary>
-                    <AppLayout />
-                  </ErrorBoundary>
+                <ProtectedRoute> { /* Proteger a área interna */}
+                  {/* SUBSTITUIR AppLayout por div + Outlet para teste */}
+                  <div className="simple-layout-wrapper">
+                    <h2>Layout Simples (Teste)</h2>
+                    <hr />
+                    {/* Outlet é necessário para renderizar as rotas filhas */}
+                    <Outlet /> 
+                  </div>
                 </ProtectedRoute>
               }
             >
-              {/* Rotas aninhadas (filhas do AppLayout) - MANTIDAS SIMPLES POR ENQUANTO */}
+              {/* Rotas aninhadas (filhas) - MANTIDAS SIMPLES POR ENQUANTO */}
               <Route
                 index // Rota padrão -> dashboard
                 element={<Navigate to="dashboard" replace />}
