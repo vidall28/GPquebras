@@ -7,6 +7,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "r
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { DataProvider } from "@/context/DataContext";
 import { AppLayout } from "@/components/Layout/AppLayout";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 // Interface para as props das rotas administrativas
 interface AdminRouteProps {
@@ -90,97 +91,104 @@ const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   return <>{children}</>;
 };
 
+// Componente de conteúdo da aplicação envolvido pelo ErrorBoundary
+const AppContent = () => (
+  <Router>
+    <AuthProvider>
+      <DataProvider>
+        <Toaster />
+        <Sonner />
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/diagnostico" element={<DiagnosticsPage />} />
+          
+          {/* Redirect root to login or dashboard based on auth */}
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          
+          {/* Protected Routes */}
+          <Route path="/" element={<AppLayout />}>
+            <Route 
+              path="dashboard" 
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="record" 
+              element={
+                <ProtectedRoute>
+                  <RecordExchange />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="history" 
+              element={
+                <ProtectedRoute>
+                  <History />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="approvals" 
+              element={
+                <ProtectedRoute>
+                  <Approvals />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="products" 
+              element={
+                <AdminRoute>
+                  <Products />
+                </AdminRoute>
+              } 
+            />
+            <Route 
+              path="users" 
+              element={
+                <AdminRoute>
+                  <Users />
+                </AdminRoute>
+              } 
+            />
+            <Route 
+              path="reports" 
+              element={
+                <ProtectedRoute>
+                  <Reports />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="notifications" 
+              element={
+                <ProtectedRoute>
+                  <NotificationsPage />
+                </ProtectedRoute>
+              } 
+            />
+          </Route>
+          
+          {/* 404 Route */}
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </DataProvider>
+    </AuthProvider>
+  </Router>
+);
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <Router>
-        <AuthProvider>
-          <DataProvider>
-            <Toaster />
-            <Sonner />
-            <Routes>
-              {/* Public Routes */}
-              <Route path="/login" element={<Login />} />
-              <Route path="/register" element={<Register />} />
-              <Route path="/diagnostico" element={<DiagnosticsPage />} />
-              
-              {/* Redirect root to login or dashboard based on auth */}
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              
-              {/* Protected Routes */}
-              <Route path="/" element={<AppLayout />}>
-                <Route 
-                  path="dashboard" 
-                  element={
-                    <ProtectedRoute>
-                      <Dashboard />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="record" 
-                  element={
-                    <ProtectedRoute>
-                      <RecordExchange />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="history" 
-                  element={
-                    <ProtectedRoute>
-                      <History />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="approvals" 
-                  element={
-                    <ProtectedRoute>
-                      <Approvals />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="products" 
-                  element={
-                    <AdminRoute>
-                      <Products />
-                    </AdminRoute>
-                  } 
-                />
-                <Route 
-                  path="users" 
-                  element={
-                    <AdminRoute>
-                      <Users />
-                    </AdminRoute>
-                  } 
-                />
-                <Route 
-                  path="reports" 
-                  element={
-                    <ProtectedRoute>
-                      <Reports />
-                    </ProtectedRoute>
-                  } 
-                />
-                <Route 
-                  path="notifications" 
-                  element={
-                    <ProtectedRoute>
-                      <NotificationsPage />
-                    </ProtectedRoute>
-                  } 
-                />
-              </Route>
-              
-              {/* 404 Route */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </DataProvider>
-        </AuthProvider>
-      </Router>
+      <ErrorBoundary>
+        <AppContent />
+      </ErrorBoundary>
     </TooltipProvider>
   </QueryClientProvider>
 );

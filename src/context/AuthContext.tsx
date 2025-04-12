@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User, ADMIN_EMAILS, Tables, upsertUser, quickConnectionCheck } from '@/lib/supabase';
+import { supabase, User, ADMIN_EMAILS, Tables, upsertUser, quickConnectionCheck, checkIfUserIsAdmin } from '@/lib/supabase';
 import { useNotifications } from '@/lib/notifications';
 import { ensureOfflineManagerInitialized } from '@/lib/offlineManager';
 
