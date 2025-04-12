@@ -17,6 +17,8 @@ export const AppLayout: React.FC = () => {
   const location = useLocation();
   const isMobile = useIsMobile();
   
+  // --- INÍCIO: COMENTAR useEffects PARA DEBUG ---
+  /*
   // Mostrar o indicador de saúde de dados apenas para administradores
   useEffect(() => {
     setShowDataHealth(isAdmin);
@@ -37,6 +39,8 @@ export const AppLayout: React.FC = () => {
       setIsSidebarOpen(false);
     }
   }, [location.pathname, isMobile]);
+  */
+  // --- FIM: COMENTAR useEffects PARA DEBUG ---
   
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
