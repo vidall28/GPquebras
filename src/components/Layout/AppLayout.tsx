@@ -49,7 +49,8 @@ export const AppLayout: React.FC = () => {
       <ConnectionStatus /> 
       
       
-      {/* Sidebar */}
+      {/* Sidebar - COMENTADO PARA DEBUG */}
+      {/* 
       <div
         className={cn(
           "fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 ease-in-out bg-white border-r border-border shadow-sm",
@@ -59,7 +60,7 @@ export const AppLayout: React.FC = () => {
       >
         <Sidebar onClose={() => setIsSidebarOpen(false)} />
       </div>
-      
+      */}
       
       {/* Mobile Overlay */}
       {isMobile && isSidebarOpen && (
