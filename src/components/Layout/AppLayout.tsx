@@ -44,12 +44,12 @@ export const AppLayout: React.FC = () => {
   
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* --- INÍCIO: COMENTAR FILHOS PARA DEBUG --- */}
-      {/* Status de Conexão 
+      {/* --- INÍCIO: RESTAURAR OUTROS FILHOS --- */}
+      {/* Status de Conexão */}
       <ConnectionStatus /> 
-      */}
       
-      {/* Sidebar 
+      
+      {/* Sidebar */}
       <div
         className={cn(
           "fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 ease-in-out bg-white border-r border-border shadow-sm",
@@ -59,25 +59,25 @@ export const AppLayout: React.FC = () => {
       >
         <Sidebar onClose={() => setIsSidebarOpen(false)} />
       </div>
-      */}
       
-      {/* Mobile Overlay 
+      
+      {/* Mobile Overlay */}
       {isMobile && isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
-      */}
+      
       
       {/* Main Content - Manter estrutura básica e Outlet */}
       <div className={cn(
         "flex flex-col flex-1 overflow-hidden transition-all duration-300 ease-in-out",
-        // Aplicar alguma lógica de margem simples ou nenhuma para teste
-        // isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0")
-        "w-full" 
+        // Restaurar lógica de margem
+        isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0")
+        //"w-full" 
       )}>
-        {/* Header - RESTAURADO */}
+        {/* Header - RESTAURADO (Exceto NotificationDropdown) */}
         <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 border-b bg-background/90 backdrop-blur-sm">
           <div className="flex items-center gap-4">
             {/* Mobile sidebar toggle */}
@@ -110,7 +110,7 @@ export const AppLayout: React.FC = () => {
           
           {/* User Info */}
           <div className="flex items-center gap-4">
-            {/* <NotificationDropdown /> - COMENTADO PARA DEBUG */}
+             {/* <NotificationDropdown /> - COMENTADO PARA DEBUG */}
             <div className="flex flex-col justify-center">
               <span className="text-sm">{user?.name || 'Usuário'}</span>
               <span className="text-xs text-muted-foreground">Matrícula: {user?.registration || 'N/A'}</span>
@@ -129,6 +129,7 @@ export const AppLayout: React.FC = () => {
           </div>
         </header>
         
+        
         {/* Page Content */}
         <main className="flex-1 overflow-auto">
           <div className="container py-6 max-w-7xl animate-fade-in">
@@ -136,14 +137,14 @@ export const AppLayout: React.FC = () => {
           </div>
         </main>
         
-        {/* Data Health Indicator 
+        {/* Data Health Indicator */}
         {showDataHealth && (
           <div className="fixed bottom-4 right-4 z-50">
             <DataHealthIndicator />
           </div>
         )}
-        */}
-       {/* --- FIM: COMENTAR FILHOS PARA DEBUG --- */}
+        
+       {/* --- FIM: RESTAURAR OUTROS FILHOS --- */}
       </div>
     </div>
   );
