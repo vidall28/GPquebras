@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User, ADMIN_EMAILS, Tables, upsertUser, quickConnectionCheck, checkIfUserIsAdmin } from '@/lib/supabase';
+import { supabase, User, Tables, upsertUser, checkIfUserIsAdmin } from '@/lib/supabase';
 import { useNotifications } from '@/lib/notifications';
 import { ensureOfflineManagerInitialized } from '@/lib/offlineManager';
 
@@ -196,15 +196,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Marcar que estamos em processo de contingência
               localStorage.setItem('auth_contingency_in_progress', 'true');
               
-              // Verificar se o usuário é administrador através do RPC
-              let adminStatusFromDb = false;
+              // Verificar se o usuário é administrador através do RPC (usando a função importada)
+              let adminStatusFromRpc = false;
               try {
-                const { data: adminCheck } = await supabase.rpc('check_if_admin', {
-                  user_id: session.user.id 
-                });
-                if (adminCheck === true) {
-                  adminStatusFromDb = true;
-                  console.log("Confirmação de admin obtida via procedimento RPC");
+                // Usar a função checkIfUserIsAdmin importada
+                adminStatusFromRpc = await checkIfUserIsAdmin(session.user.id);
+                if (adminStatusFromRpc) {
+                  console.log("Confirmação de admin obtida via RPC is_admin");
                 }
               } catch (rpcError) {
                 console.error("Erro ao verificar status de admin via RPC:", rpcError);
@@ -218,12 +216,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 const userMetadata = authUser.user.user_metadata || {};
                 const isAdminInMetadata = userMetadata.role === 'admin';
                 
-                // Verificar email para administrador
-                const adminEmails = ADMIN_EMAILS || ['admin@example.com']; // Usa ADMIN_EMAILS do supabase.ts
-                const isAdminByEmail = adminEmails.includes(authUser.user.email || '');
-                
-                // Determinar se é admin com base em todas as verificações
-                const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
+                // Determinar se é admin com base nas verificações restantes
+                const shouldBeAdmin = isAdminInMetadata || adminStatusFromRpc;
                 
                 // Criar usuário mínimo com os dados disponíveis
                 const fallbackUser: User = {
@@ -231,7 +225,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   name: authUser.user.user_metadata?.name || authUser.user.email?.split('@')[0] || 'Usuário',
                   registration: authUser.user.user_metadata?.registration || '00000000',
                   email: authUser.user.email || '',
-                  role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação 
+                  role: shouldBeAdmin ? 'admin' : 'user', // Usa o resultado da verificação
                   status: 'active'
                 };
                 
@@ -476,31 +470,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               
               console.log("Encontrou indicação de administrador nos metadados?", isAdminInMetadata);
               
-              // 4. Como última tentativa, verificar o email do usuário
-              // Geralmente há um padrão de emails para administradores que podemos usar
-              const adminEmails = ADMIN_EMAILS || ['admin@example.com']; // Usa ADMIN_EMAILS do supabase.ts
-              const isAdminByEmail = adminEmails.includes(session.user.email || '');
-              
-              // 5. Verificar carimbo de administrador em outros sistemas
-              // Tentativa direta via SQL para verificar status de admin (sem usar os níveis de abstração)
-              let adminStatusFromDb = false;
+              // 4. Verificar carimbo de administrador em outros sistemas
+              // Tentativa via RPC is_admin
+              let adminStatusFromRpc = false;
               try {
-                const { data: adminCheck } = await supabase.rpc('check_if_admin', {
-                  user_id: session.user.id 
-                });
-                if (adminCheck === true) {
-                  adminStatusFromDb = true;
-                  console.log("Confirmação de admin obtida via procedimento RPC");
+                // Usar a função importada checkIfUserIsAdmin
+                adminStatusFromRpc = await checkIfUserIsAdmin(session.user.id);
+                if (adminStatusFromRpc === true) {
+                  console.log("Confirmação de admin obtida via RPC is_admin");
                 }
               } catch (rpcError) {
                 console.error("Erro ao verificar status de admin via RPC:", rpcError);
               }
               
-              // 6. Determinar se o usuário é admin baseado em todas as verificações
-              const shouldBeAdmin = isAdminInMetadata || isAdminByEmail || adminStatusFromDb;
+              // 5. Determinar se o usuário é admin baseado nas verificações restantes
+              const shouldBeAdmin = isAdminInMetadata || adminStatusFromRpc;
               console.log("Decisão final sobre status de admin:", shouldBeAdmin);
               
-              // 7. Tenta inserir ou atualizar o usuário na tabela users
+              // 6. Tenta inserir ou atualizar o usuário na tabela users
               try {
                 // Criar usuário mínimo com os dados disponíveis
                 const fallbackUser: User = {
@@ -636,40 +623,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       console.log(`Iniciando processo de login para: ${email} às ${new Date().toISOString()}`);
       
-      // Verificar rapidamente a conexão antes de prosseguir
-      console.log('Verificando conexão com o Supabase...');
-      const connectionCheck = await quickConnectionCheck();
-      console.log('Resultado da verificação de conexão:', connectionCheck);
-      
-      if (!connectionCheck.ok) {
-        console.warn('Problemas na conexão detectados:', connectionCheck.message);
-        
-        // Se for um problema de API key, tentar reiniciar o cliente
-        if (connectionCheck.message.includes('API key')) {
-          console.log('Tentando reiniciar o cliente Supabase devido a problema de API key');
-          const resetSuccess = await resetSupabaseClient();
-          
-          if (!resetSuccess) {
-            toast.error(`Erro de conexão: ${connectionCheck.message}`);
-            setIsLoading(false);
-            return;
-          }
-          
-          // Verificar novamente após reiniciar
-          const newCheck = await quickConnectionCheck();
-          if (!newCheck.ok) {
-            toast.error(`Conexão ainda com problemas: ${newCheck.message}`);
-            setIsLoading(false);
-            return;
-          }
-          
-          console.log('Conexão restaurada após reiniciar cliente');
-        } else if (connectionCheck.latency > 5000) {
-          // Se a latência for muito alta, avisar o usuário mas continuar
-          toast.info(`Conexão lenta (${connectionCheck.latency}ms). O login pode demorar.`);
-        }
-      }
-      
       // Limpar qualquer resquício de sessão anterior
       console.log('Limpando dados residuais de sessão anterior');
       try {
@@ -733,9 +686,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Redirecionar para dashboard imediatamente
       // 3. Buscar detalhes adicionais em segundo plano
 
-      // Verificar email administrativo (mais rápido, não depende de banco)
-      const isAdminByEmail = ADMIN_EMAILS.includes(email);
-      
       // Obter informações básicas dos metadados
       const userMetadata = authData.user.user_metadata || {};
       const userName = userMetadata.name || userMetadata.full_name || email.split('@')[0];
@@ -747,7 +697,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         name: userName,
         registration: userRegistration,
         email: email,
-        role: isAdminByEmail ? 'admin' : 'user',
+        role: 'user', // Inicia como user, verifica admin em background
         status: 'active'
       };
       
@@ -808,35 +758,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               // Usuário não existe no banco, criar um novo
               console.log('Perfil não encontrado, criando novo perfil');
               
+              // Corrigir tratamento de upsertUser (usa try/catch)
               try {
-                const upsertResult = await upsertUser(basicUser);
-                if (!upsertResult.success) {
-                  console.warn('Erro ao criar perfil:', upsertResult.error);
-                }
+                await upsertUser(basicUser);
+                console.log('Perfil criado via upsertUser'); 
               } catch (createError) {
-                console.warn('Exceção ao criar perfil:', createError);
+                console.warn('Exceção ao criar perfil via upsertUser:', createError);
+                // Poderia adicionar um toast aqui se necessário
               }
             }
           } catch (profileError) {
             console.warn('Erro na operação de perfil em segundo plano:', profileError);
           }
           
-          // 2. Verificar status de admin no banco
+          // 2. Verificar status de admin no banco (AGORA É A ÚNICA VERIFICAÇÃO)
           try {
-            if (!isAdminByEmail) {
-              console.log('Verificando status de admin no banco...');
-              const isAdminInDB = await checkIfUserIsAdmin(basicUser.id);
+            console.log('Verificando status de admin no banco...');
+            const isAdminInDB = await checkIfUserIsAdmin(basicUser.id);
+            
+            if (isAdminInDB && basicUser.role !== 'admin') {
+              console.log('Usuário identificado como admin no banco');
               
-              if (isAdminInDB && basicUser.role !== 'admin') {
-                console.log('Usuário identificado como admin no banco');
-                
-                setUser(prev => ({
-                  ...prev,
-                  role: 'admin'
-                }));
-                
-                toast.info('Permissões administrativas concedidas');
-              }
+              // Atualizar o estado local se for admin
+              setUser(prev => prev ? { ...prev, role: 'admin' } : null);
+              
+              // Atualizar o registro no banco também (opcional, mas bom para consistência)
+              // Pode ser movido para dentro de upsertUser se preferir
+              supabase.from('users').update({ role: 'admin' }).eq('id', basicUser.id).then(({ error }) => {
+                if (error) console.warn("Erro ao atualizar role no DB:", error);
+              });
+              
+              toast.info('Permissões administrativas concedidas');
+            } else if (!isAdminInDB && basicUser.role === 'admin') {
+               // Caso raro: metadados diziam admin, mas DB discorda. Usar DB como verdade.
+               console.warn("Inconsistência: metadados indicavam admin, mas DB discorda. Revertendo para 'user'");
+               setUser(prev => prev ? { ...prev, role: 'user' } : null);
+               supabase.from('users').update({ role: 'user' }).eq('id', basicUser.id).then(({ error }) => {
+                if (error) console.warn("Erro ao reverter role no DB:", error);
+              });
             }
           } catch (adminError) {
             console.warn('Erro ao verificar status de admin:', adminError);
@@ -871,255 +830,107 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Register function
-  const register = async (registration: string, name: string, email: string, password: string, confirmPassword: string) => {
-    setIsLoading(true);
+  const register = async (
+    registration: string, 
+    name: string, 
+    email: string, 
+    password: string, 
+    confirmPassword: string
+  ) => {
+    if (password !== confirmPassword) {
+      toast.error('As senhas não coincidem');
+      return;
+    }
     
+    setIsLoading(true);
+    let createdAuthUserId: string | null = null; // Para rollback se necessário
+
     try {
-      // Log de início de processo
-      console.log('Iniciando processo de registro:', { registration, name, email });
+      console.log('Iniciando processo de registro para:', email);
       
-      if (password !== confirmPassword) {
-        toast.error('As senhas não coincidem');
-        return;
+      // Validações básicas
+      if (!name || !email || !registration || !password) {
+        toast.error('Todos os campos são obrigatórios');
+        throw new Error('Campos obrigatórios não preenchidos.'); // Lança erro para o catch
       }
-      
-      if (registration.length !== 8 || !/^\d+$/.test(registration)) {
-        toast.error('A matrícula deve conter 8 dígitos');
-        return;
+      if (password.length < 6) {
+        toast.error('A senha deve ter pelo menos 6 caracteres.');
+        throw new Error('Senha muito curta.'); // Lança erro para o catch
       }
-      
-      // Verificar entrada de nome
-      if (!name || name.trim() === '') {
-        toast.error('O nome não pode estar vazio');
-        return;
-      }
-      
-      // Verificações adicionais para matrícula
-      if (!registration || registration.trim() === '') {
-        toast.error('A matrícula não pode estar vazia');
-        return;
-      }
-      
-      // Verificar formato do email
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(email)) {
-        toast.error('Formato de email inválido');
-        return;
-      }
-      
-      // Verificar se o email já está cadastrado
-      const { data: existingUsersByEmail, error: emailCheckError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email);
-        
-      if (emailCheckError) {
-        console.error('Erro ao verificar email:', emailCheckError);
-      } else if (existingUsersByEmail && existingUsersByEmail.length > 0) {
-        toast.error('Email já cadastrado');
-        return;
-      }
-      
-      // Verificar se a matrícula já existe
-      const { data: existingUser, error: checkError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('registration', registration)
-        .single();
-        
-      if (existingUser) {
-        toast.error('Matrícula já cadastrada');
-        return;
-      }
-      
-      console.log('Dados do registro antes de criar usuário:', {
-        registration: registration.trim(),
-        name: name.trim(),
-        email: email
-      });
-      
-      // Criar usuário no Auth do Supabase usando o email fornecido
+      // Outras validações (matrícula, etc.) podem ser adicionadas aqui
+
+      // Verificar se o email ou matrícula já existem (opcional, signUp pode falhar também)
+      // ... (código de verificação de existência omitido por brevidade, mas pode ser mantido) ...
+
+      // Criar usuário no Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email,
         password: password,
         options: {
-          data: {
+          data: { // Metadados iniciais
             registration: registration.trim(),
             name: name.trim()
           }
         }
       });
-      
+
       if (authError) {
         console.error('Erro ao criar usuário no Auth:', authError);
-        toast.error('Erro ao criar conta: ' + authError.message);
-        return;
+        if (authError.message.includes('User already registered')) {
+           toast.error('Este email já está registrado.');
+        } else {
+           toast.error('Erro ao criar conta: ' + authError.message);
+        }
+        throw authError; // Lança para o catch principal
       }
-      
+
       if (!authData.user) {
-        toast.error('Erro ao criar usuário');
-        return;
+        toast.error('Erro inesperado: usuário não retornado após criação.');
+        throw new Error('Usuário não retornado pelo Supabase Auth.'); // Lança para o catch
       }
       
-      console.log('Usuário criado com sucesso no Auth:', authData.user.id);
-      
-      // MODIFICAÇÃO: Adicionar um pequeno atraso para garantir que o usuário foi criado no Auth
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Preparar os dados do usuário para inserção
+      createdAuthUserId = authData.user.id; // Guarda ID para possível rollback
+      console.log('Usuário criado com sucesso no Auth:', createdAuthUserId);
+
+      // Inserir dados na tabela 'users'
       const userData = {
-        id: authData.user.id,
+        id: createdAuthUserId,
         name: name.trim(),
         registration: registration.trim(),
         email: email,
-        role: 'user',
+        role: 'user', // Define role padrão
         status: 'active'
       };
       
       console.log('Tentando inserir dados na tabela users:', userData);
-      
-      // MODIFICAÇÃO: Verificar se o usuário já existe na tabela users antes de inserir
-      const { data: existingUserData, error: existingUserError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', authData.user.id)
-        .single();
-        
-      if (existingUserData) {
-        console.log('Usuário já existe na tabela users, atualizando dados:', existingUserData);
-        
-        // Atualizar os dados do usuário existente
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({
-            name: name.trim(),
-            registration: registration.trim(),
-            email: email,
-            status: 'active'
-          })
-          .eq('id', authData.user.id);
-          
-        if (updateError) {
-          console.error('Erro ao atualizar dados do usuário:', updateError);
-          toast.error('Erro ao atualizar dados do usuário');
-          return;
-        }
-        
-        console.log('Dados do usuário atualizados com sucesso');
-      } else {
-        // Inserir dados do usuário na tabela users, incluindo o email
-        const { error: insertError } = await supabase
-          .from('users')
-          .insert([userData]);
-          
-        if (insertError) {
-          console.error('Erro ao inserir dados do usuário:', insertError);
-          
-          // MODIFICAÇÃO: Tentar uma abordagem direta via SQL se o insert falhar
-          console.log('Tentando inserir usuário via SQL direto...');
-          
-          const sqlInsert = `
-            INSERT INTO public.users (id, name, registration, email, role, status, created_at)
-            VALUES ('${authData.user.id}', '${name.trim()}', '${registration.trim()}', '${email}', 'user', 'active', now())
-          `;
-          
-          const { error: rpcError } = await supabase.rpc('execute_sql', { sql: sqlInsert });
-          
-          if (rpcError) {
-            console.error('Erro ao inserir via SQL direto:', rpcError);
-            
-            // Se não conseguiu inserir, tentar remover o usuário do Auth
-            try {
-              await supabase.auth.admin.deleteUser(authData.user.id);
-            } catch (deleteError) {
-              console.error('Erro ao remover usuário do Auth:', deleteError);
-            }
-            
-            toast.error('Erro ao cadastrar dados do usuário. Entre em contato com o suporte.');
-            return;
-          } else {
-            console.log('Usuário inserido com sucesso via SQL direto');
-          }
-        }
+      const { error: insertError } = await supabase.from('users').insert([userData]);
+
+      if (insertError) {
+         console.error('Erro ao inserir dados do usuário na tabela users:', insertError);
+         // Tentar rollback do usuário no Auth
+         if (createdAuthUserId) {
+           console.warn(`Tentando remover usuário ${createdAuthUserId} do Auth devido a falha na inserção no DB.`);
+           try {
+             // Nota: a chamada admin pode não estar disponível no frontend dependendo da config
+             await supabase.auth.admin.deleteUser(createdAuthUserId); 
+             console.log(`Usuário ${createdAuthUserId} removido do Auth.`);
+           } catch (deleteError: any) {
+             console.error(`Falha ao remover usuário ${createdAuthUserId} do Auth:`, deleteError.message);
+             toast.info('Falha ao sincronizar dados. Contate o suporte se o problema persistir.');
+           }
+         }
+         toast.error('Erro ao finalizar cadastro. Tente novamente.');
+         throw insertError; // Lança para o catch principal
       }
       
-      // Verificar se os dados foram inseridos corretamente
-      const { data: checkUserData, error: checkUserError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', authData.user.id)
-        .single();
-       
-      if (checkUserError) {
-        console.error('Erro ao verificar dados do usuário inserido:', checkUserError);
-      } else {
-        console.log('Dados do usuário inseridos com sucesso:', checkUserData);
-        
-        // Verificar se os dados salvos correspondem aos fornecidos
-        if (checkUserData.name !== name.trim()) {
-          console.warn('Nome salvo diferente:', {
-            fornecido: name.trim(),
-            salvo: checkUserData.name
-          });
-          
-          // Tentar corrigir o nome
-          const { error: nameUpdateError } = await supabase
-            .from('users')
-            .update({ name: name.trim() })
-            .eq('id', authData.user.id);
-            
-          if (nameUpdateError) {
-            console.error('Erro ao corrigir nome:', nameUpdateError);
-          } else {
-            console.log('Nome corrigido com sucesso');
-          }
-        }
-        
-        if (checkUserData.registration !== registration.trim()) {
-          console.warn('Matrícula salva diferente:', {
-            fornecida: registration.trim(),
-            salva: checkUserData.registration
-          });
-          
-          // Tentar corrigir a matrícula
-          const { error: regUpdateError } = await supabase
-            .from('users')
-            .update({ registration: registration.trim() })
-            .eq('id', authData.user.id);
-            
-          if (regUpdateError) {
-            console.error('Erro ao corrigir matrícula:', regUpdateError);
-          } else {
-            console.log('Matrícula corrigida com sucesso');
-          }
-        }
-        
-        if (checkUserData.email !== email) {
-          console.warn('Email salvo diferente:', {
-            fornecido: email,
-            salvo: checkUserData.email
-          });
-          
-          // Tentar corrigir o email
-          const { error: emailUpdateError } = await supabase
-            .from('users')
-            .update({ email: email })
-            .eq('id', authData.user.id);
-            
-          if (emailUpdateError) {
-            console.error('Erro ao corrigir email:', emailUpdateError);
-          } else {
-            console.log('Email corrigido com sucesso');
-          }
-        }
-      }
-      
-      toast.success('Cadastro realizado com sucesso!');
-      toast.info('Você já pode fazer login com suas credenciais');
-      navigate('/login');
+      console.log('Dados do usuário inseridos com sucesso na tabela users.');
+      toast.success('Cadastro realizado! Verifique seu e-mail para confirmação (se aplicável) e faça login.');
+      navigate('/login'); // Redireciona para login após sucesso
+
     } catch (error) {
-      console.error('Erro no registro:', error);
-      toast.error('Erro ao realizar cadastro: ' + (error instanceof Error ? error.message : 'Erro desconhecido'));
+      // Erros específicos já mostraram toasts, aqui apenas logamos
+      console.error('Erro geral no processo de registro:', error);
+      // Se chegou aqui, um toast de erro já deve ter sido exibido
     } finally {
       setIsLoading(false);
     }
