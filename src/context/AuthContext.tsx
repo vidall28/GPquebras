@@ -1,94 +1,22 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from '@/lib/toast';
-import { supabase, User, Tables, upsertUser, checkIfUserIsAdmin } from '@/lib/supabase';
+import { supabase, User, Tables } from '@/lib/supabase';
 import { useNotifications } from '@/lib/notifications';
 import { ensureOfflineManagerInitialized } from '@/lib/offlineManager';
-
-// Função para recriar o cliente Supabase e tentar corrigir problemas de API key
-const resetSupabaseClient = async () => {
-  console.log('===== INICIANDO REINICIALIZAÇÃO DO CLIENTE SUPABASE =====');
-  
-  try {
-    // Recuperar as variáveis de ambiente novamente
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    
-    if (!supabaseUrl || !supabaseKey) {
-      console.error('Erro: Variáveis de ambiente ainda não estão disponíveis');
-      toast.error('Erro na configuração do Supabase. Verifique as variáveis de ambiente.');
-      return false;
-    }
-    
-    console.log('URL da API:', supabaseUrl);
-    console.log('Tamanho da API Key:', supabaseKey.length);
-    
-    // Limpar o cache de autenticação
-    try {
-      localStorage.removeItem('sb-auth-token');
-      localStorage.removeItem('sb-auth-token-code-verifier');
-      localStorage.removeItem('sb-refresh-token');
-      localStorage.removeItem('auth_contingency_in_progress');
-      console.log('Cache de autenticação limpo');
-    } catch (e) {
-      console.error('Erro ao limpar cache:', e);
-    }
-    
-    // Atualizar headers globais para incluir a API key
-    try {
-      // @ts-ignore - Acessando propriedade interna do Supabase
-      if (supabase.headers) {
-        // @ts-ignore
-        supabase.headers = {
-          // @ts-ignore
-          ...supabase.headers,
-          'apikey': supabaseKey,
-          'Authorization': `Bearer ${supabaseKey}`
-        };
-        console.log('Headers globais atualizados');
-      } else {
-        console.warn('Não foi possível acessar os headers globais');
-      }
-    } catch (headerError) {
-      console.error('Erro ao atualizar headers globais:', headerError);
-    }
-    
-    // Verificar se o cliente foi reinicializado corretamente com um teste simples
-    try {
-      const { error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('Erro após reinicialização do cliente:', error);
-        toast.error('Erro ao conectar com o Supabase: ' + error.message);
-        return false;
-      }
-    } catch (sessionError) {
-      console.error('Erro ao verificar sessão após reinicialização:', sessionError);
-      return false;
-    }
-    
-    console.log('Cliente Supabase reinicializado com sucesso');
-    toast.success('Conexão com o Supabase restabelecida');
-    
-    return true;
-  } catch (e) {
-    console.error('Erro crítico ao reinicializar cliente Supabase:', e);
-    toast.error('Erro ao reinicializar cliente Supabase');
-    return false;
-  }
-};
+import { Session } from '@supabase/supabase-js';
 
 // Define auth context interface
 interface AuthContextType {
   user: User | null;
+  session: Session | null;
   login: (email: string, password: string) => Promise<void>;
   register: (registration: string, name: string, email: string, password: string, confirmPassword: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   isAuthenticated: boolean;
   isAdmin: boolean;
   isLoading: boolean;
-  resetSupabaseClient: () => Promise<boolean>;
 }
 
 // Create the context
@@ -96,448 +24,394 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // Initialize as true
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
 
-  // Função auxiliar para logar mudanças de estado
+  // Função auxiliar para logar (mantida para debug)
   const logStateChange = (action: string, details: any = '') => {
-      console.log(`[AuthContext State Change] ${new Date().toISOString()} - ${action}`, details);
+      console.log(`[AuthContext Refactored] ${new Date().toISOString()} - ${action}`, details);
   };
 
-  // Principal listener para estado de autenticação
+  // Função para buscar dados do perfil do usuário
+  const fetchUserProfile = useCallback(async (userId: string): Promise<User | null> => {
+    logStateChange('fetchUserProfile: Called', `UserID: ${userId}`);
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (userError) {
+        logStateChange('fetchUserProfile: Error fetching profile', userError);
+        toast.error(`Erro ao buscar perfil: ${userError.message}`);
+        return null;
+      }
+
+      if (userData) {
+        logStateChange('fetchUserProfile: Profile found', userData);
+        const currentUser: User = {
+          id: userData.id,
+          name: userData.name,
+          registration: userData.registration,
+          email: userData.email,
+          role: userData.role,
+          status: userData.status
+        };
+        return currentUser;
+      } else {
+        logStateChange('fetchUserProfile: Profile not found in DB', `UserID: ${userId}`);
+        toast.error('Perfil de usuário não encontrado na base de dados.');
+        return null;
+      }
+    } catch (error) {
+      logStateChange('fetchUserProfile: Unexpected error', error);
+      toast.error('Erro inesperado ao buscar perfil.');
+      return null;
+    }
+  }, []); // useCallback para evitar recriação desnecessária
+
+  // Listener principal e verificação inicial
   useEffect(() => {
-    logStateChange("Setting up onAuthStateChange listener...");
-    // Set loading true when listener setup begins - LOGGING BEFORE
-    logStateChange("Initial listener setup: Setting isLoading=true");
-    setIsLoading(true); 
+    let isMounted = true; // Flag para evitar atualizações de estado após desmontar
+    logStateChange('useEffect[]: Mounting and checking initial session...');
+    setIsLoading(true);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      logStateChange(`AUTH EVENT RECEIVED: ${event}`, session ? `Session User ID: ${session.user.id}` : 'No session');
-      
-      // Sempre iniciar como loading quando um evento relevante acontece
-      // Exceto para SIGNED_OUT que já define isLoading=false
-      if (event !== 'SIGNED_OUT') {
-          // LOGGING BEFORE
-          logStateChange(`Event ${event}: Setting isLoading=true before processing`);
-          setIsLoading(true);
+    const checkSessionAndSetupListener = async () => {
+      logStateChange('checkSession: Attempting to get current session...');
+      const { data: { session: initialSession }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        logStateChange('checkSession: Error getting initial session', sessionError);
+        toast.error(`Erro ao verificar sessão: ${sessionError.message}`);
+        // Mesmo com erro, continuamos para configurar o listener
       }
 
-      if (event === 'SIGNED_OUT') {
-        logStateChange("Event SIGNED_OUT: Clearing user and setting isLoading=false");
-        setUser(null);
-        setIsLoading(false);
-        return;
+      if (initialSession && isMounted) {
+        logStateChange('checkSession: Initial session found', `UserID: ${initialSession.user.id}`);
+        setSession(initialSession);
+        const profile = await fetchUserProfile(initialSession.user.id);
+        if (profile && isMounted) {
+          setUser(profile);
+        } else if (!profile) {
+          // Se temos sessão mas não perfil, algo está errado, deslogar
+          logStateChange('checkSession: Profile not found for initial session, signing out.');
+          await supabase.auth.signOut(); // Não precisa setar user/session aqui, o listener fará
+        }
+      } else {
+         logStateChange('checkSession: No initial session found.');
+         // Garante que user e session estão nulos se não houver sessão inicial
+         if (isMounted) {
+           setUser(null);
+           setSession(null);
+         }
       }
 
-      if (session) {
-        logStateChange(`Event ${event}: Processing session...`, `User ID: ${session.user.id}`);
-        try {
-          // Busca sempre os dados mais recentes do usuário na tabela 'users'
-          logStateChange(`Event ${event}: Fetching detailed user data...`);
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-
-          if (userError) {
-            logStateChange(`Event ${event}: Error fetching user data`, userError);
-            toast.error('Erro ao carregar dados do perfil. Saindo...');
-            await supabase.auth.signOut(); // Força logout em caso de erro
-            logStateChange(`Event ${event}: Setting user=null after fetch error`);
-            setUser(null); 
-            // LOGGING BEFORE - Moved to finally
-            // setIsLoading(false); 
+      // Configura o listener DEPOIS de verificar a sessão inicial
+      logStateChange('setupListener: Setting up onAuthStateChange...');
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(
+        async (event, currentSession) => {
+          if (!isMounted) {
+            logStateChange(`onAuthStateChange: ${event} received, but component unmounted. Ignoring.`);
             return;
           }
 
-          if (userData) {
-            const currentUser: User = {
-              id: userData.id,
-              name: userData.name,
-              registration: userData.registration,
-              email: userData.email,
-              role: userData.role,
-              status: userData.status
-            };
-            logStateChange(`Event ${event}: Updating user state with fetched data`, currentUser);
-            setUser(currentUser); // Define o usuário diretamente
-          } else {
-            logStateChange(`Event ${event}: Session valid, but user not found in DB. Signing out.`, `User ID: ${session.user.id}`);
-            toast.error('Erro de sincronização de dados. Por favor, faça login novamente.');
-            await supabase.auth.signOut();
-            logStateChange(`Event ${event}: Setting user=null after user not found`);
-            setUser(null);
-          }
+          logStateChange(`onAuthStateChange: Event received: ${event}`, currentSession ? `UserID: ${currentSession.user.id}` : 'No session');
+          setSession(currentSession); // Atualiza a sessão do Supabase
 
-        } catch (error) {
-           logStateChange(`Event ${event}: Unexpected error in listener`, error);
-           toast.error('Erro inesperado ao verificar sessão. Saindo...');
-           await supabase.auth.signOut(); // Força logout em erro grave
-           logStateChange(`Event ${event}: Setting user=null after unexpected error`);
-           setUser(null); 
-        } finally {
-          // Definir loading false SEMPRE que o processo terminar (sucesso ou falha na busca)
-          // LOGGING BEFORE
-          logStateChange(`Event ${event}: FINALLY block - Setting isLoading=false`);
-          setIsLoading(false); 
+          if (event === 'SIGNED_IN' && currentSession) {
+            setIsLoading(true); // Mostra loading enquanto busca perfil
+            const profile = await fetchUserProfile(currentSession.user.id);
+            if (profile && isMounted) {
+              setUser(profile);
+            } else if (!profile && isMounted) {
+              // Se logou mas não achou perfil, deslogar
+              logStateChange('onAuthStateChange SIGNED_IN: Profile not found, signing out.');
+              toast.error('Falha ao carregar perfil após login. Desconectando.');
+              await supabase.auth.signOut(); // Listener pegará o SIGNED_OUT
+            }
+            setIsLoading(false);
+          } else if (event === 'SIGNED_OUT') {
+            setUser(null);
+            setSession(null);
+            // Limpar sistemas dependentes se necessário
+            logStateChange('onAuthStateChange SIGNED_OUT: User state cleared.');
+            setIsLoading(false); // Garante que o loading termina no logout
+          } else if (event === 'USER_UPDATED' && currentSession) {
+             // Opcional: Recarregar perfil se dados relevantes no Supabase Auth mudaram
+             logStateChange('onAuthStateChange USER_UPDATED: Re-fetching profile...');
+             setIsLoading(true);
+             const profile = await fetchUserProfile(currentSession.user.id);
+             if (profile && isMounted) setUser(profile);
+             setIsLoading(false);
+          } else if (event === 'TOKEN_REFRESHED') {
+             logStateChange('onAuthStateChange TOKEN_REFRESHED: Session updated.');
+             // A sessão já foi atualizada pelo setSession(currentSession)
+             // Não precisa fazer mais nada geralmente, a menos que precise revalidar algo
+          } else if (event === 'PASSWORD_RECOVERY') {
+             logStateChange('onAuthStateChange PASSWORD_RECOVERY: User needs to set a new password.');
+             // Pode redirecionar para uma página de redefinição de senha aqui
+             navigate('/reset-password'); // Exemplo
+          }
         }
-      } else {
-        // Nenhum usuário logado (ex: após SIGNED_OUT ou INITIAL_SESSION sem usuário)
-        logStateChange(`Event ${event}: No session, setting user=null and isLoading=false`);
-        setUser(null);
+      );
+
+      // Define isLoading como false APÓS a verificação inicial e configuração do listener
+      if (isMounted) {
+        logStateChange('useEffect[]: Initial check complete, setting isLoading=false.');
         setIsLoading(false);
       }
-    });
 
-    logStateChange("onAuthStateChange listener configured.");
-
-    // Limpar subscription quando o componente for desmontado
-    return () => {
-      logStateChange("Cleaning up auth subscription...");
-      subscription?.unsubscribe();
+      // Função de limpeza
+      return () => {
+        logStateChange('useEffect[]: Unmounting. Cleaning up subscription.');
+        isMounted = false;
+        subscription?.unsubscribe();
+      };
     };
-  }, []); // Executa apenas uma vez na montagem
 
-  // useEffect para inicializar sistemas dependentes do usuário
+    checkSessionAndSetupListener();
+
+    // Retorna a função de limpeza do useEffect principal
+    // (a função retornada por checkSessionAndSetupListener será chamada na desmontagem)
+    return () => {
+        logStateChange('useEffect[] Cleanup Function Execution');
+        isMounted = false;
+        // A limpeza da subscription é tratada dentro do checkSessionAndSetupListener
+    };
+
+  }, [fetchUserProfile, navigate]); // Adicionar dependências estáveis
+
+  // Inicialização de sistemas dependentes (Notificações, Offline)
   useEffect(() => {
     if (user) {
-      logStateChange("User authenticated, initializing dependent systems (Notifications/Offline disabled for debug)", `User ID: ${user.id}`);
-      // TEMPORARIAMENTE COMENTADO PARA DEBUG DE RECURSÃO:
+      logStateChange('useEffect[user]: User authenticated, initializing dependent systems.', `User ID: ${user.id}`);
       // try {
       //   useNotifications.init(user.id);
-      // } catch (e) {
-      //   console.error("Erro ao inicializar notificações:", e);
-      // }
-      // try {
       //   ensureOfflineManagerInitialized(user.id);
       // } catch (e) {
-      //   console.error("Erro ao inicializar offline manager:", e);
+      //   logStateChange('useEffect[user]: Error initializing dependent systems', e);
       // }
-      
-      // console.log('Sistemas de notificações e offline inicializados para o usuário:', user.id);
     } else {
-      logStateChange("User not authenticated, ensuring dependent systems are inactive.");
-      // Adicionar lógicas de limpeza aqui se necessário quando o usuário desloga
+      logStateChange('useEffect[user]: User not authenticated, dependent systems inactive.');
+      // Lógica de limpeza para notificações/offline se necessário
     }
-  }, [user]); // Depende do estado 'user'
+  }, [user]);
 
-  // Login function (simplificada)
-  const login = async (email: string, password: string) => {
-    // Iniciar loading aqui
-    logStateChange("Login function called: Setting isLoading=true");
-    setIsLoading(true); 
-    localStorage.setItem('login_attempt_timestamp', Date.now().toString());
-    
+  // --- Funções de Ação ---
+
+  const login = useCallback(async (email: string, password: string) => {
+    logStateChange('login: Attempting...', { email });
+    setIsLoading(true);
     try {
-      logStateChange(`Login attempt for: ${email}`);
-      
-      // Limpar qualquer resquício de sessão anterior (mantido)
-      logStateChange('Login: Clearing previous session tokens');
-      try {
-        localStorage.removeItem('supabase.auth.token');
-        sessionStorage.removeItem('supabase.auth.token');
-        localStorage.removeItem('sb-auth-token');
-        localStorage.removeItem('sb-refresh-token');
-        localStorage.removeItem('auth_contingency_in_progress');
-        logStateChange('Login: Previous tokens cleared');
-      } catch (e) { /* ignore */ }
-
-      // Enviar requisição de login para o Supabase e aguardar diretamente
-      logStateChange('Login: Sending signInWithPassword request and awaiting result...');
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email: email,
-        password: password,
-      });
-      
-      logStateChange('Login: Auth response received', { hasSession: !!authData?.session, error: authError?.message });
-      
-      // TRATAMENTO DE ERRO NO LOGIN
-      if (authError || !authData?.session) {
-        logStateChange('Login: Auth failed', authError ? authError.message : 'Undefined session');
-        toast.error(`Falha na autenticação: ${authError ? authError.message : 'Resposta inválida do servidor'}`);
-        // LOGGING BEFORE
-        logStateChange("Login: Setting isLoading=false due to auth error");
-        setIsLoading(false); // Define loading false AQUI no erro
-        return; // Sai da função login
-      }
-      
-      // SUCESSO NO LOGIN (onAuthStateChange tratará a atualização de estado)
-      logStateChange('Login: signIn successful. Waiting for onAuthStateChange to handle state.');
-      toast.success('Login realizado com sucesso! Carregando dados...'); 
-      localStorage.setItem('login_success_timestamp', Date.now().toString());
-      // isLoading será definido como false pelo onAuthStateChange
-
-    } catch (error) {
-      logStateChange('Login: Fatal error during login process', error);
-      let errorMessage = 'Erro ao realizar login';
-      if (error instanceof Error) {
-        if (error.message.includes('Timeout')) {
-          errorMessage = 'O servidor demorou muito para responder. Verifique sua conexão.';
-        } else if (error.message.includes('fetch')) {
-          errorMessage = 'Erro de conexão. Verifique sua internet.';
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        logStateChange('login: Auth error', error);
+        // Erros comuns: Invalid login credentials, Email not confirmed
+        if (error.message.includes('Invalid login credentials')) {
+          toast.error('Credenciais inválidas. Verifique seu email e senha.');
+        } else if (error.message.includes('Email not confirmed')) {
+           toast.error('Email não confirmado. Verifique sua caixa de entrada.');
         } else {
-          errorMessage += ': ' + error.message;
+           toast.error(`Erro no login: ${error.message}`);
         }
+        setIsLoading(false); // Termina loading no erro
+      } else {
+        logStateChange('login: Success. Waiting for onAuthStateChange.');
+        toast.success('Login iniciado...'); // onAuthStateChange cuidará do resto
+        // setIsLoading será false quando onAuthStateChange buscar o perfil
       }
-      toast.error(errorMessage);
-      // Definir isLoading como false AQUI também em caso de erro geral
-      // LOGGING BEFORE
-      logStateChange("Login: Setting isLoading=false due to catch block error");
-      setIsLoading(false); 
-    } 
-    // O finally foi removido pois isLoading agora é gerenciado pelo onAuthStateChange ou pelos blocos de erro
-  };
+    } catch (error) {
+      logStateChange('login: Unexpected error', error);
+      toast.error('Erro inesperado durante o login.');
+      setIsLoading(false); // Termina loading no erro
+    }
+    // Não colocar finally setIsLoading(false) aqui, pois o sucesso depende do onAuthStateChange
+  }, []);
 
-  // Register function
-  const register = async (
-    registration: string, 
-    name: string, 
-    email: string, 
-    password: string, 
+  const register = useCallback(async (
+    registration: string,
+    name: string,
+    email: string,
+    password: string,
     confirmPassword: string
   ) => {
+    logStateChange('register: Attempting...', { email, name, registration });
     if (password !== confirmPassword) {
-      toast.error('As senhas não coincidem');
+      toast.error('As senhas não coincidem.');
       return;
     }
-    
-    logStateChange("Register function called: Setting isLoading=true");
     setIsLoading(true);
-    let createdAuthUserId: string | null = null; // Para rollback se necessário
-
     try {
-      logStateChange('Register: Starting registration process', { email });
-      
-      // Validações básicas
-      if (!name || !email || !registration || !password) {
-        toast.error('Todos os campos são obrigatórios');
-        throw new Error('Campos obrigatórios não preenchidos.'); // Lança erro para o catch
-      }
-      if (password.length < 6) {
-        toast.error('A senha deve ter pelo menos 6 caracteres.');
-        throw new Error('Senha muito curta.'); // Lança erro para o catch
-      }
-      // Outras validações (matrícula, etc.) podem ser adicionadas aqui
-
-      // Verificar se o email ou matrícula já existem (opcional, signUp pode falhar também)
-      // ... (código de verificação de existência omitido por brevidade, mas pode ser mantido) ...
-
-      // Criar usuário no Auth
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email,
-        password: password,
+       // 1. Registrar no Supabase Auth
+       logStateChange('register: Calling supabase.auth.signUp...');
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
         options: {
-          data: { // Metadados iniciais
-            registration: registration.trim(),
-            name: name.trim()
+          // Data pode ser usado para passar info que pode ser útil
+          // em email templates ou functions/triggers após o signup.
+          // NÃO use para dados de perfil que devem ir na tabela 'users'.
+          data: {
+             name: name, // Exemplo, pode não ser o ideal aqui
+             registration: registration // Exemplo
           }
         }
       });
 
-      if (authError) {
-        console.error('Erro ao criar usuário no Auth:', authError);
-        if (authError.message.includes('User already registered')) {
-           toast.error('Este email já está registrado.');
+      if (signUpError) {
+         logStateChange('register: Supabase signUp error', signUpError);
+        if (signUpError.message.includes('User already registered')) {
+          toast.error('Este email já está cadastrado.');
+        } else if (signUpError.message.includes('Password should be at least 6 characters')) {
+           toast.error('A senha deve ter pelo menos 6 caracteres.');
         } else {
-           toast.error('Erro ao criar conta: ' + authError.message);
+          toast.error(`Erro no registro: ${signUpError.message}`);
         }
-        throw authError; // Lança para o catch principal
-      }
-
-      if (!authData.user) {
-        toast.error('Erro inesperado: usuário não retornado após criação.');
-        throw new Error('Usuário não retornado pelo Supabase Auth.'); // Lança para o catch
-      }
-      
-      createdAuthUserId = authData.user.id; // Guarda ID para possível rollback
-      console.log('Usuário criado com sucesso no Auth:', createdAuthUserId);
-
-      // Inserir dados na tabela 'users'
-      const userData = {
-        id: createdAuthUserId,
-        name: name.trim(),
-        registration: registration.trim(),
-        email: email,
-        role: 'user', // Define role padrão
-        status: 'active'
-      };
-      
-      console.log('Tentando inserir dados na tabela users:', userData);
-      const { error: insertError } = await supabase.from('users').insert([userData]);
-
-      if (insertError) {
-         console.error('Erro ao inserir dados do usuário na tabela users:', insertError);
-         // Tentar rollback do usuário no Auth
-         if (createdAuthUserId) {
-           console.warn(`Tentando remover usuário ${createdAuthUserId} do Auth devido a falha na inserção no DB.`);
-           try {
-             // Nota: a chamada admin pode não estar disponível no frontend dependendo da config
-             await supabase.auth.admin.deleteUser(createdAuthUserId); 
-             console.log(`Usuário ${createdAuthUserId} removido do Auth.`);
-           } catch (deleteError: any) {
-             console.error(`Falha ao remover usuário ${createdAuthUserId} do Auth:`, deleteError.message);
-             toast.info('Falha ao sincronizar dados. Contate o suporte se o problema persistir.');
-           }
-         }
-         toast.error('Erro ao finalizar cadastro. Tente novamente.');
-         throw insertError; // Lança para o catch principal
-      }
-      
-      console.log('Dados do usuário inseridos com sucesso na tabela users.');
-      toast.success('Cadastro realizado! Verifique seu e-mail para confirmação (se aplicável) e faça login.');
-      navigate('/login'); // Redireciona para login após sucesso
-
-    } catch (error) {
-      // Erros específicos já mostraram toasts, aqui apenas logamos
-      logStateChange('Register: General error during registration', error);
-      // Se chegou aqui, um toast de erro já deve ter sido exibido
-    } finally {
-      logStateChange("Register: FINALLY block - Setting isLoading=false");
-      setIsLoading(false);
-    }
-  };
-
-  // Recuperação de senha
-  const resetPassword = async (email: string) => {
-    logStateChange("ResetPassword function called: Setting isLoading=true");
-    setIsLoading(true);
-    
-    try {
-      logStateChange('ResetPassword: Sending request for email', { email });
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`, // Página para redefinir a senha
-      });
-      
-      if (error) {
-        logStateChange('ResetPassword: Error during request', error);
-        toast.error('Erro ao enviar email de recuperação');
+        setIsLoading(false);
         return;
       }
-      
-      logStateChange('ResetPassword: Email sent successfully');
-      toast.success('Email de recuperação enviado com sucesso!');
-      toast.info('Verifique sua caixa de entrada e siga as instruções para redefinir sua senha.');
+
+       logStateChange('register: Supabase signUp successful', signUpData);
+
+       // Verificar se o usuário foi criado e se requer confirmação
+       if (!signUpData.user) {
+           logStateChange('register: signUp successful but no user object returned. Strange case.');
+           toast.error('Erro inesperado no registro. Tente novamente.');
+           setIsLoading(false);
+           return;
+       }
+
+       // 2. Inserir/Atualizar na tabela 'users' (SE signUp bem-sucedido)
+       // É importante que a tabela 'users' use o ID do supabase.auth.users como chave primária
+       // e tenha políticas RLS configuradas corretamente.
+       logStateChange('register: Upserting user profile data...', { userId: signUpData.user.id });
+       const { error: profileError } = await supabase
+         .from('users')
+         .upsert({
+           id: signUpData.user.id, // Chave estrangeira para auth.users.id
+           registration,
+           name,
+           email, // Pode ser redundante se já estiver em auth.users
+           role: 'user', // Definir role padrão
+           status: 'ativo' // Definir status padrão
+         });
+
+       if (profileError) {
+         logStateChange('register: Error upserting profile', profileError);
+         toast.error(`Erro ao salvar perfil: ${profileError.message}`);
+         // Considerar: deletar o usuário do auth se o perfil falhou? (rollback manual)
+         // await supabase.auth.admin.deleteUser(signUpData.user.id); // Requer privilégios de admin
+         toast.warning('Registro parcial. Contate o suporte.');
+         setIsLoading(false);
+         return;
+       }
+
+       logStateChange('register: Profile upsert successful.');
+
+       // Verificar se a confirmação de email é necessária
+       const emailConfirmationNeeded = signUpData.user.identities?.length === 0; // Supabase pode retornar identities vazio se email não confirmado
+
+       if (emailConfirmationNeeded || !signUpData.session) { // Ou se a sessão não foi criada automaticamente
+           logStateChange('register: Email confirmation likely needed.');
+           toast.success('Registro realizado! Verifique seu email para confirmação.');
+           navigate('/login'); // Enviar para login após registro
+       } else {
+           logStateChange('register: SignUp seems complete (session created/no confirmation needed). Waiting for onAuthStateChange.');
+           toast.success('Registro e login realizados com sucesso!');
+           // onAuthStateChange deve pegar o SIGNED_IN agora
+       }
+
     } catch (error) {
-      logStateChange('ResetPassword: Error during request', error);
-      toast.error('Erro ao processar solicitação');
+      logStateChange('register: Unexpected error', error);
+      toast.error('Erro inesperado durante o registro.');
     } finally {
-      logStateChange("ResetPassword: FINALLY block - Setting isLoading=false");
+      // Definir isLoading como false no finally da função register,
+      // pois onAuthStateChange pode ou não ser acionado dependendo da confirmação de email.
       setIsLoading(false);
+      logStateChange('register: Finished.');
     }
-  };
+  }, [navigate]);
 
-  // Logout function
-  const logout = async () => {
+  const logout = useCallback(async () => {
+    logStateChange('logout: Attempting...');
+    setIsLoading(true);
     try {
-      logStateChange("Logout function called: Setting isLoading=true");
-      setIsLoading(true); // Ativar indicador de carregamento
-      
-      // Preparar-se para o logout
-      const currentPath = window.location.pathname;
-      logStateChange("Logout: Current path", currentPath);
-      
-      // Limpar estado de usuário primeiro para uma resposta mais rápida na UI
-      logStateChange("Logout: Setting user=null (UI update)");
-      setUser(null);
-      
-      // Limpar todo o storage associado ao Supabase antes do logout
-      logStateChange("Logout: Clearing local storage");
-      localStorage.removeItem('supabase.auth.token');
-      sessionStorage.removeItem('supabase.auth.token');
-      
-      // Executar o logout no Supabase
-      logStateChange("Logout: Calling supabase.auth.signOut...");
-      const { error } = await supabase.auth.signOut({
-        scope: 'global' // Alterado para 'global' para garantir um logout completo
-      });
-      
+      const { error } = await supabase.auth.signOut();
       if (error) {
-        logStateChange('Logout: Error during supabase.auth.signOut', error);
-        
-        // Limpar todos os dados de sessão localmente
-        try {
-          logStateChange("Logout: Manually clearing storage due to signOut error");
-          sessionStorage.clear();
-          localStorage.clear(); // Limpar todo localStorage para garantir
-          document.cookie.split(";").forEach((c) => {
-            document.cookie = c
-              .replace(/^ +/, "")
-              .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-          });
-        } catch (clearError) {
-          logStateChange("Logout: Error clearing local data manually", clearError);
-        }
-        
-        // Avisar o usuário, mas permitir que o logout prossiga
-        toast.error('Houve um problema ao encerrar a sessão, mas você foi desconectado');
+        logStateChange('logout: Error during signOut', error);
+        toast.error(`Erro ao sair: ${error.message}`);
+        // Mesmo com erro, tentar limpar localmente e navegar
+        setUser(null);
+        setSession(null);
+        navigate('/login');
       } else {
-        // Logout bem-sucedido
-        logStateChange("Logout: supabase.auth.signOut successful");
-        toast.info('Sessão encerrada com sucesso');
+        logStateChange('logout: signOut successful. Waiting for onAuthStateChange.');
+        // setUser(null) e setSession(null) serão feitos pelo onAuthStateChange
       }
-      
-      // Forçar navegação independente do resultado
-      logStateChange("Logout: Navigating to /login via window.location.href after 500ms");
-      window.setTimeout(() => {
-        window.location.href = '/login'; // Usar window.location para garantir uma recarga completa
-      }, 500);
-      
     } catch (error) {
-      logStateChange('Logout: Unexpected error during logout', error);
-      
-      // Tratamento de contingência: forçar o logout mesmo após erro
-      logStateChange("Logout: Setting user=null in catch block");
-      setUser(null);
-      
-      try {
-        // Limpar manualmente
-        logStateChange("Logout: Manually clearing storage in catch block");
-        localStorage.clear();
-        sessionStorage.clear();
-        
-        // Tentar novamente com opções simplificadas
-        logStateChange("Logout: Retrying signOut in catch block");
-        await supabase.auth.signOut();
-      } catch (secondError) {
-        logStateChange("Logout: Error during second signOut attempt", secondError);
-      }
-      
-      toast.error('Ocorreu um erro ao encerrar a sessão, mas você foi desconectado');
-      
-      // Forçar navegação para login com reload completo
-      logStateChange("Logout: Navigating to /login via window.location.href after 500ms (from catch)");
-      window.setTimeout(() => {
-        window.location.href = '/login';
-      }, 500);
-      
+      logStateChange('logout: Unexpected error', error);
+      toast.error('Erro inesperado ao sair.');
+       // Garantir limpeza local em caso de erro catastrófico
+       setUser(null);
+       setSession(null);
+       navigate('/login');
     } finally {
-      // LOGGING BEFORE
-      logStateChange("Logout: FINALLY block - Setting isLoading=false");
-      setIsLoading(false); // Garantir que loading seja false ao final do processo
+       // O isLoading será definido como false pelo onAuthStateChange (SIGNED_OUT)
+       // Mas podemos adicionar aqui por segurança se o evento falhar
+       setIsLoading(false);
+       logStateChange('logout: Finished.');
     }
+  }, [navigate]);
+
+  const resetPassword = useCallback(async (email: string) => {
+    logStateChange('resetPassword: Attempting...', { email });
+    setIsLoading(true);
+    try {
+      // Nota: redirectTo deve apontar para a página onde o usuário definirá a nova senha.
+      // O Supabase adicionará parâmetros à URL.
+      const redirectTo = `${window.location.origin}/update-password`;
+      logStateChange('resetPassword: Redirect URL set to', redirectTo);
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) {
+        logStateChange('resetPassword: Error', error);
+        toast.error(`Erro ao enviar email: ${error.message}`);
+      } else {
+        logStateChange('resetPassword: Email sent successfully.');
+        toast.success('Email de recuperação enviado! Verifique sua caixa de entrada.');
+      }
+    } catch (error) {
+      logStateChange('resetPassword: Unexpected error', error);
+      toast.error('Erro inesperado ao solicitar recuperação.');
+    } finally {
+      setIsLoading(false);
+      logStateChange('resetPassword: Finished.');
+    }
+  }, []);
+
+  // --- Valores Expostos ---
+
+  const isAuthenticated = !!user && !!session; // Usuário logado E com perfil carregado
+  const isAdmin = user?.role === 'admin'; // Verifica se o usuário tem a role 'admin'
+
+  const value = {
+    user,
+    session,
+    login,
+    register,
+    resetPassword,
+    logout,
+    isAuthenticated,
+    isAdmin,
+    isLoading,
   };
 
-  return (
-    <AuthContext.Provider
-      value={{
-        user,
-        login,
-        register,
-        resetPassword,
-        logout,
-        isAuthenticated: !!user,
-        isAdmin: user?.role === 'admin',
-        isLoading,
-        resetSupabaseClient
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
-// Custom hook to use auth context
+// Hook para usar o contexto
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {
@@ -545,3 +419,6 @@ export const useAuth = () => {
   }
   return context;
 };
+
+// Exportar tipos se necessário
+export type { User }; // Exporta nosso tipo User customizado
