@@ -195,13 +195,10 @@ const AppContent = () => (
               path="/" // Rota pai para todas as rotas autenticadas
               element={
                 <ProtectedRoute> { /* Proteger a área interna */}
-                  {/* SUBSTITUIR AppLayout por div + Outlet para teste */}
-                  <div className="simple-layout-wrapper">
-                    <h2>Layout Simples (Teste)</h2>
-                    <hr />
-                    {/* Outlet é necessário para renderizar as rotas filhas */}
-                    <Outlet /> 
-                  </div>
+                  {/* Restaurar AppLayout real */}
+                   <ErrorBoundary>
+                     <AppLayout />
+                   </ErrorBoundary>
                 </ProtectedRoute>
               }
             >
