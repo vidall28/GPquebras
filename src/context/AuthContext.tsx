@@ -620,13 +620,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Login function
   const login = async (email: string, password: string) => {
     setIsLoading(true);
+    localStorage.setItem('login_attempt_timestamp', Date.now().toString());
     
     try {
-      console.log(`Iniciando processo de login para: ${email}`);
+      console.log(`Iniciando processo de login para: ${email} às ${new Date().toISOString()}`);
       
       // Verificar rapidamente a conexão antes de prosseguir
+      console.log('Verificando conexão com o Supabase...');
       const connectionCheck = await quickConnectionCheck();
-      console.log('Verificação de conexão:', connectionCheck);
+      console.log('Resultado da verificação de conexão:', connectionCheck);
       
       if (!connectionCheck.ok) {
         console.warn('Problemas na conexão detectados:', connectionCheck.message);
@@ -659,32 +661,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // Limpar qualquer resquício de sessão anterior
       console.log('Limpando dados residuais de sessão anterior');
-      localStorage.removeItem('supabase.auth.token');
-      sessionStorage.removeItem('supabase.auth.token');
-      localStorage.removeItem('sb-auth-token');
-      localStorage.removeItem('sb-refresh-token');
-      
-      // Limpar cache de tentativas de contingência
-      localStorage.removeItem('auth_contingency_in_progress');
+      try {
+        localStorage.removeItem('supabase.auth.token');
+        sessionStorage.removeItem('supabase.auth.token');
+        localStorage.removeItem('sb-auth-token');
+        localStorage.removeItem('sb-refresh-token');
+        localStorage.removeItem('auth_contingency_in_progress');
+        console.log('Limpeza de sessão anterior concluída');
+      } catch (e) {
+        console.warn('Erro ao limpar dados de sessão:', e);
+      }
       
       // Configuração para persistência da sessão
       const persistenceOptions = {
         persistSession: true
       };
       
+      console.log('Enviando requisição de login para o Supabase...');
+      
       // Fazer login com timeout para evitar bloqueio indefinido
       const authPromise = supabase.auth.signInWithPassword({
         email: email,
-        password: password,
-        options: persistenceOptions
+        password: password
       });
       
       // Criar um timeout para a operação de login
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Timeout ao fazer login')), 15000);
+        setTimeout(() => {
+          console.error('TIMEOUT: A operação de login excedeu o limite de tempo');
+          reject(new Error('Timeout ao fazer login'));
+        }, 15000);
       });
       
       // Usar Promise.race para aplicar o timeout
+      console.log('Aguardando resposta da autenticação com timeout de 15s...');
       const { data: authData, error: authError } = await Promise.race([
         authPromise,
         timeoutPromise.then(() => { 
@@ -692,13 +702,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         })
       ]) as any;
       
-      console.log('Resposta da autenticação:', 
+      console.log('Resposta recebida da autenticação:', 
                  authData ? 'Autenticação bem-sucedida' : 'Sem dados de autenticação', 
                  authError ? `Erro: ${authError.message}` : 'Sem erros');
       
-      if (authError || !authData.user) {
-        console.error('Erro ao fazer login:', authError);
-        toast.error(`Credenciais inválidas${authError ? `: ${authError.message}` : ''}`);
+      if (authError || !authData?.user) {
+        console.error('Erro ao fazer login:', authError ? authError.message : 'Usuário indefinido na resposta');
+        toast.error(`Falha na autenticação: ${authError ? authError.message : 'Resposta inválida do servidor'}`);
         setIsLoading(false);
         return;
       }
@@ -734,6 +744,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Definindo usuário básico:', basicUser);
       setUser(basicUser);
       toast.success('Login realizado com sucesso!');
+      localStorage.setItem('login_success_timestamp', Date.now().toString());
       
       // CRÍTICO: Redirecionar para o dashboard IMEDIATAMENTE
       console.log('Iniciando redirecionamento para dashboard...');

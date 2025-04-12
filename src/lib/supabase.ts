@@ -977,28 +977,31 @@ export const upsertUser = async (user: User): Promise<{ success: boolean; error?
       if (insertError) {
         console.error('Erro ao criar usuário:', insertError);
         
-        // Segunda tentativa com merge
-        console.log('Tentando inserção com merge...');
-        const { error: mergeError } = await supabase
-          .from('users')
-          .insert([{
-            id: user.id,
-            name: user.name,
-            registration: user.registration,
-            email: user.email,
-            role: user.role,
-            status: user.status
-          }])
-          .onConflict('id')
-          .merge();
+        // Segunda tentativa: atualização direta
+        console.log('Tentando atualização direta como alternativa...');
+        try {
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({
+              name: user.name,
+              registration: user.registration,
+              email: user.email,
+              role: user.role,
+              status: user.status
+            })
+            .eq('id', user.id);
           
-        if (mergeError) {
-          console.error('Erro também na inserção com merge:', mergeError);
-          return { success: false, error: mergeError };
+          if (updateError) {
+            console.error('Erro também na atualização alternativa:', updateError);
+            return { success: false, error: updateError };
+          }
+          
+          console.log('Usuário criado com sucesso via update');
+          return { success: true };
+        } catch (e) {
+          console.error('Erro na tentativa alternativa:', e);
+          return { success: false, error: e };
         }
-        
-        console.log('Usuário inserido com sucesso usando merge');
-        return { success: true };
       }
       
       console.log('Usuário inserido com sucesso');
