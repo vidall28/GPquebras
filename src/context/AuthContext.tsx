@@ -99,32 +99,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true); // Initialize as true
   const navigate = useNavigate();
 
+  // Função auxiliar para logar mudanças de estado
+  const logStateChange = (action: string, details: any = '') => {
+      console.log(`[AuthContext State Change] ${new Date().toISOString()} - ${action}`, details);
+  };
+
   // Principal listener para estado de autenticação
   useEffect(() => {
-    console.log("Configurando listener onAuthStateChange...");
-    setIsLoading(true); // Set loading true when listener setup begins
+    logStateChange("Setting up onAuthStateChange listener...");
+    // Set loading true when listener setup begins - LOGGING BEFORE
+    logStateChange("Initial listener setup: Setting isLoading=true");
+    setIsLoading(true); 
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log(`Evento de autenticação: ${event}${session ? ' com sessão' : ''}`);
+      logStateChange(`AUTH EVENT RECEIVED: ${event}`, session ? `Session User ID: ${session.user.id}` : 'No session');
       
       // Sempre iniciar como loading quando um evento relevante acontece
       // Exceto para SIGNED_OUT que já define isLoading=false
       if (event !== 'SIGNED_OUT') {
+          // LOGGING BEFORE
+          logStateChange(`Event ${event}: Setting isLoading=true before processing`);
           setIsLoading(true);
       }
 
       if (event === 'SIGNED_OUT') {
-        console.log("Evento SIGNED_OUT recebido, limpando usuário.");
+        logStateChange("Event SIGNED_OUT: Clearing user and setting isLoading=false");
         setUser(null);
         setIsLoading(false);
         return;
       }
 
       if (session) {
-        console.log(`Usuário autenticado (evento ${event}), ID: ${session.user.id}`);
+        logStateChange(`Event ${event}: Processing session...`, `User ID: ${session.user.id}`);
         try {
           // Busca sempre os dados mais recentes do usuário na tabela 'users'
-          console.log(`Buscando dados detalhados do usuário após evento ${event}...`);
+          logStateChange(`Event ${event}: Fetching detailed user data...`);
           const { data: userData, error: userError } = await supabase
             .from('users')
             .select('*')
@@ -132,11 +141,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .single();
 
           if (userError) {
-            console.error(`Erro ao buscar dados do usuário (evento ${event}):`, userError);
+            logStateChange(`Event ${event}: Error fetching user data`, userError);
             toast.error('Erro ao carregar dados do perfil. Saindo...');
             await supabase.auth.signOut(); // Força logout em caso de erro
+            logStateChange(`Event ${event}: Setting user=null after fetch error`);
             setUser(null); 
-            setIsLoading(false); 
+            // LOGGING BEFORE - Moved to finally
+            // setIsLoading(false); 
             return;
           }
 
@@ -149,37 +160,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               role: userData.role,
               status: userData.status
             };
-            console.log(`Atualizando usuário no estado a partir do evento (${event}):`, currentUser);
+            logStateChange(`Event ${event}: Updating user state with fetched data`, currentUser);
             setUser(currentUser); // Define o usuário diretamente
           } else {
-            console.warn(`Sessão válida (evento ${event}), mas usuário ${session.user.id} não encontrado na tabela 'users'. Saindo...`);
+            logStateChange(`Event ${event}: Session valid, but user not found in DB. Signing out.`, `User ID: ${session.user.id}`);
             toast.error('Erro de sincronização de dados. Por favor, faça login novamente.');
             await supabase.auth.signOut();
+            logStateChange(`Event ${event}: Setting user=null after user not found`);
             setUser(null);
           }
 
         } catch (error) {
-           console.error(`Erro inesperado no listener onAuthStateChange (evento ${event}):`, error);
+           logStateChange(`Event ${event}: Unexpected error in listener`, error);
            toast.error('Erro inesperado ao verificar sessão. Saindo...');
            await supabase.auth.signOut(); // Força logout em erro grave
+           logStateChange(`Event ${event}: Setting user=null after unexpected error`);
            setUser(null); 
         } finally {
           // Definir loading false SEMPRE que o processo terminar (sucesso ou falha na busca)
+          // LOGGING BEFORE
+          logStateChange(`Event ${event}: FINALLY block - Setting isLoading=false`);
           setIsLoading(false); 
         }
       } else {
         // Nenhum usuário logado (ex: após SIGNED_OUT ou INITIAL_SESSION sem usuário)
-        console.log(`Evento ${event} sem sessão, usuário definido como nulo.`);
+        logStateChange(`Event ${event}: No session, setting user=null and isLoading=false`);
         setUser(null);
         setIsLoading(false);
       }
     });
 
-    console.log("Listener onAuthStateChange configurado.");
+    logStateChange("onAuthStateChange listener configured.");
 
     // Limpar subscription quando o componente for desmontado
     return () => {
-      console.log("Limpando subscription de autenticação onAuthStateChange");
+      logStateChange("Cleaning up auth subscription...");
       subscription?.unsubscribe();
     };
   }, []); // Executa apenas uma vez na montagem
@@ -187,8 +202,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // useEffect para inicializar sistemas dependentes do usuário
   useEffect(() => {
     if (user) {
-      console.log("Usuário autenticado, inicializando sistemas avançados (NOTIFICAÇÕES E OFFLINE TEMPORARIAMENTE DESABILITADOS PARA DEBUG)");
-      
+      logStateChange("User authenticated, initializing dependent systems (Notifications/Offline disabled for debug)", `User ID: ${user.id}`);
       // TEMPORARIAMENTE COMENTADO PARA DEBUG DE RECURSÃO:
       // try {
       //   useNotifications.init(user.id);
@@ -203,7 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // console.log('Sistemas de notificações e offline inicializados para o usuário:', user.id);
     } else {
-      console.log("Usuário não autenticado, garantindo que sistemas (notificações/offline) não estão ativos.");
+      logStateChange("User not authenticated, ensuring dependent systems are inactive.");
       // Adicionar lógicas de limpeza aqui se necessário quando o usuário desloga
     }
   }, [user]); // Depende do estado 'user'
@@ -211,25 +225,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Login function (simplificada)
   const login = async (email: string, password: string) => {
     // Iniciar loading aqui
+    logStateChange("Login function called: Setting isLoading=true");
     setIsLoading(true); 
     localStorage.setItem('login_attempt_timestamp', Date.now().toString());
     
     try {
-      console.log(`Iniciando processo de login para: ${email} às ${new Date().toISOString()}`);
+      logStateChange(`Login attempt for: ${email}`);
       
       // Limpar qualquer resquício de sessão anterior (mantido)
-      console.log('Limpando dados residuais de sessão anterior');
+      logStateChange('Login: Clearing previous session tokens');
       try {
         localStorage.removeItem('supabase.auth.token');
         sessionStorage.removeItem('supabase.auth.token');
         localStorage.removeItem('sb-auth-token');
         localStorage.removeItem('sb-refresh-token');
         localStorage.removeItem('auth_contingency_in_progress');
-        console.log('Limpeza de sessão anterior concluída');
+        logStateChange('Login: Previous tokens cleared');
       } catch (e) { /* ignore */ }
 
       // Enviar requisição de login para o Supabase
-      console.log('Enviando requisição de login para o Supabase...');
+      logStateChange('Login: Sending signInWithPassword request...');
       const authPromise = supabase.auth.signInWithPassword({
         email: email,
         password: password,
@@ -239,31 +254,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout (15s) ao fazer login')), 15000));
       
       // Aguardar resposta
-      console.log('Aguardando resposta da autenticação com timeout de 15s...');
+      logStateChange('Login: Awaiting auth response (15s timeout)...');
       const { data: authData, error: authError } = await Promise.race([
         authPromise,
         timeoutPromise
       ]) as any;
       
-      console.log('Resposta recebida da autenticação:', 
-                 authData?.session ? 'Login bem-sucedido' : 'Sem sessão', 
-                 authError ? `Erro: ${authError.message}` : 'Sem erros');
+      logStateChange('Login: Auth response received', { hasSession: !!authData?.session, error: authError?.message });
       
       // TRATAMENTO DE ERRO NO LOGIN
       if (authError || !authData?.session) {
-        console.error('Erro ao fazer login:', authError ? authError.message : 'Sessão indefinida na resposta');
+        logStateChange('Login: Auth failed', authError ? authError.message : 'Undefined session');
         toast.error(`Falha na autenticação: ${authError ? authError.message : 'Resposta inválida do servidor'}`);
+        // LOGGING BEFORE
+        logStateChange("Login: Setting isLoading=false due to auth error");
         setIsLoading(false); // Define loading false AQUI no erro
         return; // Sai da função login
       }
       
       // SUCESSO NO LOGIN (continua no onAuthStateChange)
-      console.log('Login via signIn bem-sucedido. Aguardando onAuthStateChange para atualizar estado.');
+      logStateChange('Login: signIn successful. Waiting for onAuthStateChange.');
       toast.success('Login realizado com sucesso! Carregando dados...'); 
       localStorage.setItem('login_success_timestamp', Date.now().toString());
+      //isLoading será definido como false pelo onAuthStateChange
 
     } catch (error) {
-      console.error('Erro fatal ao fazer login:', error);
+      logStateChange('Login: Fatal error during login process', error);
       let errorMessage = 'Erro ao realizar login';
       if (error instanceof Error) {
         if (error.message.includes('Timeout')) {
@@ -276,10 +292,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       toast.error(errorMessage);
       // Definir isLoading como false AQUI também em caso de erro geral
+      // LOGGING BEFORE
+      logStateChange("Login: Setting isLoading=false due to catch block error");
       setIsLoading(false); 
-    } finally {
-       // Remover setIsLoading(false) daqui.
-    }
+    } 
+    // O finally foi removido pois isLoading agora é gerenciado pelo onAuthStateChange ou pelos blocos de erro
   };
 
   // Register function
@@ -295,11 +312,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     
+    logStateChange("Register function called: Setting isLoading=true");
     setIsLoading(true);
     let createdAuthUserId: string | null = null; // Para rollback se necessário
 
     try {
-      console.log('Iniciando processo de registro para:', email);
+      logStateChange('Register: Starting registration process', { email });
       
       // Validações básicas
       if (!name || !email || !registration || !password) {
@@ -382,34 +400,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     } catch (error) {
       // Erros específicos já mostraram toasts, aqui apenas logamos
-      console.error('Erro geral no processo de registro:', error);
+      logStateChange('Register: General error during registration', error);
       // Se chegou aqui, um toast de erro já deve ter sido exibido
     } finally {
+      logStateChange("Register: FINALLY block - Setting isLoading=false");
       setIsLoading(false);
     }
   };
 
   // Recuperação de senha
   const resetPassword = async (email: string) => {
+    logStateChange("ResetPassword function called: Setting isLoading=true");
     setIsLoading(true);
     
     try {
+      logStateChange('ResetPassword: Sending request for email', { email });
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`, // Página para redefinir a senha
       });
       
       if (error) {
-        console.error('Erro ao enviar email de recuperação:', error);
+        logStateChange('ResetPassword: Error during request', error);
         toast.error('Erro ao enviar email de recuperação');
         return;
       }
       
+      logStateChange('ResetPassword: Email sent successfully');
       toast.success('Email de recuperação enviado com sucesso!');
       toast.info('Verifique sua caixa de entrada e siga as instruções para redefinir sua senha.');
     } catch (error) {
-      console.error('Erro ao solicitar recuperação de senha:', error);
+      logStateChange('ResetPassword: Error during request', error);
       toast.error('Erro ao processar solicitação');
     } finally {
+      logStateChange("ResetPassword: FINALLY block - Setting isLoading=false");
       setIsLoading(false);
     }
   };
@@ -417,32 +440,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Logout function
   const logout = async () => {
     try {
-      console.log("Iniciando processo de logout...");
+      logStateChange("Logout function called: Setting isLoading=true");
       setIsLoading(true); // Ativar indicador de carregamento
       
       // Preparar-se para o logout
       const currentPath = window.location.pathname;
-      console.log("Caminho atual antes do logout:", currentPath);
+      logStateChange("Logout: Current path", currentPath);
       
       // Limpar estado de usuário primeiro para uma resposta mais rápida na UI
+      logStateChange("Logout: Setting user=null (UI update)");
       setUser(null);
       
       // Limpar todo o storage associado ao Supabase antes do logout
-      console.log("Limpando dados de armazenamento local");
+      logStateChange("Logout: Clearing local storage");
       localStorage.removeItem('supabase.auth.token');
       sessionStorage.removeItem('supabase.auth.token');
       
       // Executar o logout no Supabase
+      logStateChange("Logout: Calling supabase.auth.signOut...");
       const { error } = await supabase.auth.signOut({
         scope: 'global' // Alterado para 'global' para garantir um logout completo
       });
       
       if (error) {
-        console.error('Erro ao fazer logout no Supabase:', error);
+        logStateChange('Logout: Error during supabase.auth.signOut', error);
         
         // Limpar todos os dados de sessão localmente
         try {
-          console.log("Limpando dados de sessão manualmente");
+          logStateChange("Logout: Manually clearing storage due to signOut error");
           sessionStorage.clear();
           localStorage.clear(); // Limpar todo localStorage para garantir
           document.cookie.split(";").forEach((c) => {
@@ -451,48 +476,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
           });
         } catch (clearError) {
-          console.error("Erro ao limpar dados locais:", clearError);
+          logStateChange("Logout: Error clearing local data manually", clearError);
         }
         
         // Avisar o usuário, mas permitir que o logout prossiga
         toast.error('Houve um problema ao encerrar a sessão, mas você foi desconectado');
       } else {
         // Logout bem-sucedido
-        console.log("Logout realizado com sucesso no Supabase");
+        logStateChange("Logout: supabase.auth.signOut successful");
         toast.info('Sessão encerrada com sucesso');
       }
       
       // Forçar navegação independente do resultado
+      logStateChange("Logout: Navigating to /login via window.location.href after 500ms");
       window.setTimeout(() => {
         window.location.href = '/login'; // Usar window.location para garantir uma recarga completa
       }, 500);
       
     } catch (error) {
-      console.error('Erro não esperado durante logout:', error);
+      logStateChange('Logout: Unexpected error during logout', error);
       
       // Tratamento de contingência: forçar o logout mesmo após erro
+      logStateChange("Logout: Setting user=null in catch block");
       setUser(null);
       
       try {
         // Limpar manualmente
+        logStateChange("Logout: Manually clearing storage in catch block");
         localStorage.clear();
         sessionStorage.clear();
         
         // Tentar novamente com opções simplificadas
+        logStateChange("Logout: Retrying signOut in catch block");
         await supabase.auth.signOut();
       } catch (secondError) {
-        console.error("Erro na segunda tentativa de logout:", secondError);
+        logStateChange("Logout: Error during second signOut attempt", secondError);
       }
       
       toast.error('Ocorreu um erro ao encerrar a sessão, mas você foi desconectado');
       
       // Forçar navegação para login com reload completo
+      logStateChange("Logout: Navigating to /login via window.location.href after 500ms (from catch)");
       window.setTimeout(() => {
         window.location.href = '/login';
       }, 500);
       
     } finally {
-      setIsLoading(false);
+      // LOGGING BEFORE
+      logStateChange("Logout: FINALLY block - Setting isLoading=false");
+      setIsLoading(false); // Garantir que loading seja false ao final do processo
     }
   };
 
