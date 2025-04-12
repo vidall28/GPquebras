@@ -72,116 +72,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []); // useCallback para evitar recriação desnecessária
 
-  // Listener principal e verificação inicial
+  // Listener principal (SIMPLIFICADO: A verificação inicial é feita pelo AppInitializer)
   useEffect(() => {
     let isMounted = true; // Flag para evitar atualizações de estado após desmontar
-    logStateChange('useEffect[]: Mounting and checking initial session...');
-    setIsLoading(true);
+    logStateChange('useEffect[]: Setting up onAuthStateChange listener...');
+    setIsLoading(true); // Começa como loading até o primeiro evento ser processado
 
-    const checkSessionAndSetupListener = async () => {
-      logStateChange('checkSession: Attempting to get current session...');
-      const { data: { session: initialSession }, error: sessionError } = await supabase.auth.getSession();
-
-      if (sessionError) {
-        logStateChange('checkSession: Error getting initial session', sessionError);
-        toast.error(`Erro ao verificar sessão: ${sessionError.message}`);
-        // Mesmo com erro, continuamos para configurar o listener
-      }
-
-      if (initialSession && isMounted) {
-        logStateChange('checkSession: Initial session found', `UserID: ${initialSession.user.id}`);
-        setSession(initialSession);
-        const profile = await fetchUserProfile(initialSession.user.id);
-        if (profile && isMounted) {
-          setUser(profile);
-        } else if (!profile) {
-          // Se temos sessão mas não perfil, algo está errado, deslogar
-          logStateChange('checkSession: Profile not found for initial session, signing out.');
-          await supabase.auth.signOut(); // Não precisa setar user/session aqui, o listener fará
+    logStateChange('setupListener: Setting up onAuthStateChange...');
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, currentSession) => {
+        if (!isMounted) {
+          logStateChange(`onAuthStateChange: ${event} received, but component unmounted. Ignoring.`);
+          return;
         }
-      } else {
-         logStateChange('checkSession: No initial session found.');
-         // Garante que user e session estão nulos se não houver sessão inicial
-         if (isMounted) {
-           setUser(null);
-           setSession(null);
-         }
-      }
 
-      // Configura o listener DEPOIS de verificar a sessão inicial
-      logStateChange('setupListener: Setting up onAuthStateChange...');
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(
-        async (event, currentSession) => {
-          if (!isMounted) {
-            logStateChange(`onAuthStateChange: ${event} received, but component unmounted. Ignoring.`);
-            return;
-          }
+        logStateChange(`onAuthStateChange: Event received: ${event}`, currentSession ? `UserID: ${currentSession.user.id}` : 'No session');
+        setSession(currentSession); // Atualiza a sessão do Supabase SEMPRE
 
-          logStateChange(`onAuthStateChange: Event received: ${event}`, currentSession ? `UserID: ${currentSession.user.id}` : 'No session');
-          setSession(currentSession); // Atualiza a sessão do Supabase
-
-          if (event === 'SIGNED_IN' && currentSession) {
+        if (event === 'INITIAL_SESSION' || event === 'SIGNED_IN') {
+          if (currentSession) {
             setIsLoading(true); // Mostra loading enquanto busca perfil
+            logStateChange(`onAuthStateChange ${event}: Fetching profile...`, `UserID: ${currentSession.user.id}`);
             const profile = await fetchUserProfile(currentSession.user.id);
             if (profile && isMounted) {
               setUser(profile);
+              logStateChange(`onAuthStateChange ${event}: Profile loaded, user set.`);
             } else if (!profile && isMounted) {
-              // Se logou mas não achou perfil, deslogar
-              logStateChange('onAuthStateChange SIGNED_IN: Profile not found, signing out.');
-              toast.error('Falha ao carregar perfil após login. Desconectando.');
+              logStateChange(`onAuthStateChange ${event}: Profile not found after ${event}, signing out.`);
+              toast.error('Falha ao carregar perfil após autenticação. Desconectando.');
               await supabase.auth.signOut(); // Listener pegará o SIGNED_OUT
+            } else if (!isMounted) {
+              logStateChange(`onAuthStateChange ${event}: Component unmounted during profile fetch. Ignoring setUser.`);
             }
-            setIsLoading(false);
-          } else if (event === 'SIGNED_OUT') {
+            if (isMounted) setIsLoading(false);
+          } else {
+            // Caso raro: SIGNED_IN sem sessão? Limpar tudo.
+            logStateChange(`onAuthStateChange ${event}: Event received BUT no session. Clearing state.`);
             setUser(null);
             setSession(null);
-            // Limpar sistemas dependentes se necessário
-            logStateChange('onAuthStateChange SIGNED_OUT: User state cleared.');
-            setIsLoading(false); // Garante que o loading termina no logout
-          } else if (event === 'USER_UPDATED' && currentSession) {
-             // Opcional: Recarregar perfil se dados relevantes no Supabase Auth mudaram
-             logStateChange('onAuthStateChange USER_UPDATED: Re-fetching profile...');
-             setIsLoading(true);
-             const profile = await fetchUserProfile(currentSession.user.id);
-             if (profile && isMounted) setUser(profile);
-             setIsLoading(false);
-          } else if (event === 'TOKEN_REFRESHED') {
-             logStateChange('onAuthStateChange TOKEN_REFRESHED: Session updated.');
-             // A sessão já foi atualizada pelo setSession(currentSession)
-             // Não precisa fazer mais nada geralmente, a menos que precise revalidar algo
-          } else if (event === 'PASSWORD_RECOVERY') {
-             logStateChange('onAuthStateChange PASSWORD_RECOVERY: User needs to set a new password.');
-             // Pode redirecionar para uma página de redefinição de senha aqui
-             navigate('/reset-password'); // Exemplo
+            if (isMounted) setIsLoading(false);
           }
+        } else if (event === 'SIGNED_OUT') {
+          setUser(null);
+          setSession(null);
+          logStateChange('onAuthStateChange SIGNED_OUT: User state cleared.');
+          if (isMounted) setIsLoading(false); // Garante que o loading termina no logout
+        } else if (event === 'USER_UPDATED' && currentSession) {
+            logStateChange('onAuthStateChange USER_UPDATED: Re-fetching profile...');
+            setIsLoading(true);
+            const profile = await fetchUserProfile(currentSession.user.id);
+            if (profile && isMounted) setUser(profile);
+            if (isMounted) setIsLoading(false);
+        } else if (event === 'TOKEN_REFRESHED') {
+            logStateChange('onAuthStateChange TOKEN_REFRESHED: Session updated.');
+            // A sessão já foi atualizada, isLoading não deve mudar aqui geralmente
+        } else if (event === 'PASSWORD_RECOVERY') {
+            logStateChange('onAuthStateChange PASSWORD_RECOVERY: User needs to set a new password.');
+            if (isMounted) setIsLoading(false); // Garante que loading não fique preso
+            navigate('/reset-password'); // Exemplo
         }
-      );
-
-      // Define isLoading como false APÓS a verificação inicial e configuração do listener
-      if (isMounted) {
-        logStateChange('useEffect[]: Initial check complete, setting isLoading=false.');
-        setIsLoading(false);
       }
+    );
 
-      // Função de limpeza
-      return () => {
-        logStateChange('useEffect[]: Unmounting. Cleaning up subscription.');
-        isMounted = false;
-        subscription?.unsubscribe();
-      };
-    };
-
-    checkSessionAndSetupListener();
-
-    // Retorna a função de limpeza do useEffect principal
-    // (a função retornada por checkSessionAndSetupListener será chamada na desmontagem)
+    // Função de limpeza
     return () => {
-        logStateChange('useEffect[] Cleanup Function Execution');
-        isMounted = false;
-        // A limpeza da subscription é tratada dentro do checkSessionAndSetupListener
+      logStateChange('useEffect[]: Unmounting. Cleaning up subscription.');
+      isMounted = false;
+      subscription?.unsubscribe();
     };
 
-  }, [fetchUserProfile, navigate]); // Adicionar dependências estáveis
+  }, [fetchUserProfile, navigate]); // Dependências estáveis
 
   // Inicialização de sistemas dependentes (Notificações, Offline)
   useEffect(() => {
@@ -303,7 +263,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
          toast.error(`Erro ao salvar perfil: ${profileError.message}`);
          // Considerar: deletar o usuário do auth se o perfil falhou? (rollback manual)
          // await supabase.auth.admin.deleteUser(signUpData.user.id); // Requer privilégios de admin
-         toast.warning('Registro parcial. Contate o suporte.');
+         toast.error('Registro parcial. Contate o suporte.');
          setIsLoading(false);
          return;
        }

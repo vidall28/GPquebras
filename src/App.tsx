@@ -1,3 +1,4 @@
+import React, { useState, useEffect } from 'react';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { toast } from "sonner";
@@ -8,6 +9,7 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { DataProvider } from "@/context/DataContext";
 import { AppLayout } from "@/components/Layout/AppLayout";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { supabase } from '@/lib/supabase'; // Importar supabase
 
 // Interface para as props das rotas administrativas
 interface AdminRouteProps {
@@ -31,8 +33,6 @@ import Users from "@/pages/users";
 import Reports from "@/pages/reports";
 import NotFound from "@/pages/NotFound";
 import Diagnostics from "@/pages/diagnostics";
-import CategoryEdit from '@/pages/categories/edit';
-import CategoriesList from '@/pages/categories/list';
 import DiagnosticsPage from '@/pages/diagnostics';
 import NotificationsPage from "@/pages/notifications";
 
@@ -121,15 +121,22 @@ const RecoveryMode = () => {
 // Componente para rota protegida
 const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const auth = useAuth();
-  
+  const location = useLocation();
+
+  // Espera AuthProvider terminar sua própria carga interna SE AINDA estiver carregando
+  // A carga inicial GERAL da sessão já foi feita pelo AppInitializer
   if (auth.isLoading) {
+    console.log('[ProtectedRoute] Auth context is loading...');
     return <LoadingScreen message="Verificando permissões..." />;
   }
-  
+
   if (!auth.isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    console.log('[ProtectedRoute] Not authenticated, redirecting to login.');
+    // Preserva a rota de origem para redirecionar de volta após o login
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
-  
+
+  console.log('[ProtectedRoute] Authenticated, rendering children.');
   return <>{children}</>;
 };
 
@@ -138,19 +145,24 @@ const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   const { isAuthenticated, isAdmin, isLoading } = useAuth();
   const location = useLocation();
 
+  // Espera AuthProvider terminar sua própria carga interna
   if (isLoading) {
+    console.log('[AdminRoute] Auth context is loading...');
     return <LoadingScreen message="Verificando permissões administrativas..." />;
   }
 
   if (!isAuthenticated) {
+    console.log('[AdminRoute] Not authenticated, redirecting to login.');
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   if (!isAdmin) {
+    console.log('[AdminRoute] Authenticated but not admin, redirecting to dashboard.');
     toast.error('Acesso restrito a administradores');
     return <Navigate to="/dashboard" replace />;
   }
 
+  console.log('[AdminRoute] Authenticated and admin, rendering children.');
   return <>{children}</>;
 };
 
@@ -175,86 +187,72 @@ const AppContent = () => (
           } />
           <Route path="/diagnostico" element={<DiagnosticsPage />} />
           
-          {/* Redirect root to login or dashboard based on auth */}
+          {/* Redirect root to login or dashboard */}
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           
-          {/* Protected Routes com ErrorBoundary para o AppLayout */}
+          {/* Protected Routes com AppLayout */}
           <Route path="/" element={
-            <ErrorBoundary>
-              <AppLayout />
-            </ErrorBoundary>
+            <ProtectedRoute>
+              <ErrorBoundary>
+                <AppLayout />
+              </ErrorBoundary>
+            </ProtectedRoute>
           }>
-            <Route 
-              path="dashboard" 
-              element={
-                <ProtectedRoute>
-                  <ErrorBoundary>
-                    <Dashboard />
-                  </ErrorBoundary>
-                </ProtectedRoute>
-              } 
+            <Route
+              index
+              element={<Navigate to="dashboard" replace />}
             />
-            <Route 
-              path="record" 
+            <Route
+              path="dashboard"
               element={
-                <ProtectedRoute>
-                  <ErrorBoundary>
-                    <RecordExchange />
-                  </ErrorBoundary>
-                </ProtectedRoute>
-              } 
+                <ErrorBoundary>
+                  <Dashboard />
+                </ErrorBoundary>
+              }
             />
-            <Route 
-              path="history" 
+            <Route
+              path="record"
               element={
-                <ProtectedRoute>
-                  <History />
-                </ProtectedRoute>
-              } 
+                <ErrorBoundary>
+                  <RecordExchange />
+                </ErrorBoundary>
+              }
             />
-            <Route 
-              path="approvals" 
-              element={
-                <ProtectedRoute>
-                  <Approvals />
-                </ProtectedRoute>
-              } 
+            <Route
+              path="history"
+              element={<History />}
             />
-            <Route 
-              path="products" 
+            <Route
+              path="approvals"
+              element={<Approvals />}
+            />
+            <Route
+              path="products"
               element={
                 <AdminRoute>
                   <Products />
                 </AdminRoute>
-              } 
+              }
             />
-            <Route 
-              path="users" 
+            <Route
+              path="users"
               element={
                 <AdminRoute>
                   <Users />
                 </AdminRoute>
-              } 
+              }
             />
-            <Route 
-              path="reports" 
-              element={
-                <ProtectedRoute>
-                  <Reports />
-                </ProtectedRoute>
-              } 
+            <Route
+              path="reports"
+              element={<Reports />}
             />
-            <Route 
-              path="notifications" 
-              element={
-                <ProtectedRoute>
-                  <NotificationsPage />
-                </ProtectedRoute>
-              } 
+            <Route
+              path="notifications"
+              element={<NotificationsPage />}
             />
           </Route>
           
-          {/* 404 Route */}
+          {/* Rota Catch-all para Not Found */}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </DataProvider>
@@ -262,29 +260,72 @@ const AppContent = () => (
   </Router>
 );
 
-// Componente principal com verificação de modo de recuperação
-const SafeAppContent = () => {
-  // Verificar se estamos em modo de recuperação
-  const isRecoveryMode = localStorage.getItem('recovery_mode') === 'true';
-  
-  // Em modo de recuperação, mostrar interface simplificada
-  if (isRecoveryMode) {
-    return <RecoveryMode />;
+// NOVO: Componente Inicializador
+const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [isInitializing, setIsInitializing] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    console.log('[AppInitializer] Starting initial session check...');
+
+    const checkInitialSession = async () => {
+      try {
+        // Apenas verifica a sessão, não busca perfil aqui
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('[AppInitializer] Error checking initial session:', error.message);
+          toast.error(`Erro ao verificar sessão inicial: ${error.message}`);
+        }
+        if (session) {
+           console.log('[AppInitializer] Initial session found.');
+           // O AuthProvider cuidará de buscar o perfil via onAuthStateChange
+        } else {
+           console.log('[AppInitializer] No initial session found.');
+        }
+      } catch (e) {
+        console.error('[AppInitializer] Critical error during initial session check:', e);
+        toast.error('Erro crítico na inicialização da autenticação.');
+      } finally {
+        if (isMounted) {
+          console.log('[AppInitializer] Initial check finished.');
+          setIsInitializing(false);
+        }
+      }
+    };
+
+    checkInitialSession();
+
+    return () => {
+      isMounted = false;
+      console.log('[AppInitializer] Unmounted.');
+    };
+  }, []);
+
+  if (isInitializing) {
+    return <LoadingScreen message="Inicializando aplicação..." />;
   }
-  
-  // Renderização normal se não estiver em modo de recuperação
-  return <AppContent />;
+
+  return <>{children}</>;
 };
 
 // Componente principal da aplicação
-const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <ErrorBoundary>
-        <SafeAppContent />
-      </ErrorBoundary>
-    </TooltipProvider>
-  </QueryClientProvider>
-);
+function App() {
+  // Modo de Recuperação Básico
+  if (localStorage.getItem('recovery_mode') === 'true') {
+    return <RecoveryMode />;
+  }
+
+  return (
+    <React.StrictMode>
+      <TooltipProvider>
+        <QueryClientProvider client={queryClient}>
+          <AppInitializer>
+            <AppContent />
+          </AppInitializer>
+        </QueryClientProvider>
+      </TooltipProvider>
+    </React.StrictMode>
+  );
+}
 
 export default App;
