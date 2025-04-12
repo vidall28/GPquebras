@@ -77,11 +77,57 @@ export const AppLayout: React.FC = () => {
         // isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0")
         "w-full" 
       )}>
-        {/* Header 
+        {/* Header - RESTAURADO */}
         <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 border-b bg-background/90 backdrop-blur-sm">
-          // ... Conteúdo do header comentado ...
+          <div className="flex items-center gap-4">
+            {/* Mobile sidebar toggle */}
+            <button 
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+              className="md:hidden p-2 rounded-md hover:bg-accent flex items-center justify-center"
+            >
+              <svg 
+                xmlns="http://www.w3.org/2000/svg" 
+                width="20" 
+                height="20" 
+                viewBox="0 0 24 24" 
+                fill="none" 
+                stroke="currentColor" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round"
+              >
+                <line x1="3" y1="12" x2="21" y2="12"></line>
+                <line x1="3" y1="6" x2="21" y2="6"></line>
+                <line x1="3" y1="18" x2="21" y2="18"></line>
+              </svg>
+            </button>
+            
+            {/* Logo - visible only on desktop when sidebar is closed */}
+            {!isMobile && !isSidebarOpen && (
+              <h1 className="text-xl font-semibold">GP Quebras e Trocas</h1>
+            )}
+          </div>
+          
+          {/* User Info */}
+          <div className="flex items-center gap-4">
+            <NotificationDropdown />
+            <div className="flex flex-col justify-center">
+              <span className="text-sm">{user?.name || 'Usuário'}</span>
+              <span className="text-xs text-muted-foreground">Matrícula: {user?.registration || 'N/A'}</span>
+            </div>
+            <span className="text-xs font-medium px-2 py-1 bg-primary/10 text-primary rounded-full">
+              {isAdmin ? 'Administrador' : 'Usuário'}
+            </span>
+            <button 
+              onClick={logout}
+              className="p-2 rounded-full hover:bg-accent flex items-center justify-center"
+              aria-label="Sair"
+              title="Sair"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
         </header>
-        */}
         
         {/* Page Content */}
         <main className="flex-1 overflow-auto">
