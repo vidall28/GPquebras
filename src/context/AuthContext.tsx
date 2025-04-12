@@ -243,22 +243,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logStateChange('Login: Previous tokens cleared');
       } catch (e) { /* ignore */ }
 
-      // Enviar requisição de login para o Supabase
-      logStateChange('Login: Sending signInWithPassword request...');
-      const authPromise = supabase.auth.signInWithPassword({
+      // Enviar requisição de login para o Supabase e aguardar diretamente
+      logStateChange('Login: Sending signInWithPassword request and awaiting result...');
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email,
         password: password,
       });
-      
-      // Aplicar timeout (mantido)
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout (15s) ao fazer login')), 15000));
-      
-      // Aguardar resposta
-      logStateChange('Login: Awaiting auth response (15s timeout)...');
-      const { data: authData, error: authError } = await Promise.race([
-        authPromise,
-        timeoutPromise
-      ]) as any;
       
       logStateChange('Login: Auth response received', { hasSession: !!authData?.session, error: authError?.message });
       
@@ -272,11 +262,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return; // Sai da função login
       }
       
-      // SUCESSO NO LOGIN (continua no onAuthStateChange)
-      logStateChange('Login: signIn successful. Waiting for onAuthStateChange.');
+      // SUCESSO NO LOGIN (onAuthStateChange tratará a atualização de estado)
+      logStateChange('Login: signIn successful. Waiting for onAuthStateChange to handle state.');
       toast.success('Login realizado com sucesso! Carregando dados...'); 
       localStorage.setItem('login_success_timestamp', Date.now().toString());
-      //isLoading será definido como false pelo onAuthStateChange
+      // isLoading será definido como false pelo onAuthStateChange
 
     } catch (error) {
       logStateChange('Login: Fatal error during login process', error);
