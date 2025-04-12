@@ -15,8 +15,8 @@ if (!supabaseUrl || !supabaseKey) {
   console.error('ERRO CRÍTICO: Configuração do Supabase incompleta!');
 }
 
-// Configurações avançadas para o cliente
-const supabaseConfig = {
+// Funções avançadas para o cliente Supabase
+export const supabaseConfig = {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
@@ -72,9 +72,11 @@ const supabaseConfig = {
         
         // Registrar a operação
         registerDbOperation({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           table: tableName,
           operation: operationType,
           duration,
+          timestamp: Date.now(),
           success: isSuccess,
           error: isSuccess ? undefined : `HTTP ${response.status}: ${response.statusText}`
         });
@@ -95,9 +97,11 @@ const supabaseConfig = {
         
         // Registrar a operação com falha
         registerDbOperation({
+          id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           table: tableName,
           operation: operationType,
           duration,
+          timestamp: Date.now(),
           success: false,
           error: error instanceof Error ? error.message : String(error)
         });
@@ -151,6 +155,7 @@ export type Tables = {
     role: 'admin' | 'user';
     status: 'active' | 'inactive';
     created_at: string;
+    updated_at?: string;
   };
   
   products: {
@@ -159,6 +164,7 @@ export type Tables = {
     code: string;
     capacity: number;
     created_at: string;
+    updated_at?: string;
   };
   
   exchanges: {
@@ -186,6 +192,18 @@ export type Tables = {
     id: string;
     exchange_item_id: string;
     photo_url: string;
+    created_at: string;
+  };
+
+  notifications: {
+    id: string;
+    user_id: string;
+    title: string;
+    message: string;
+    read: boolean;
+    type: 'info' | 'warning' | 'error' | 'success';
+    related_entity?: string;
+    related_id?: string;
     created_at: string;
   };
 };
@@ -371,405 +389,202 @@ export interface Exchange {
   updatedBy?: string;
 }
 
-// Função de diagnóstico para verificar conectividade
-export const testSupabaseConnection = async (): Promise<{
-  authStatus: boolean;
-  dbStatus: boolean;
-  userTableStatus: boolean;
-  storageStatus: boolean;
-  details: string[];
-}> => {
-  const details: string[] = [];
-  const result = {
-    authStatus: false,
-    dbStatus: false,
-    userTableStatus: false,
-    storageStatus: false,
-    details
-  };
-  
-  // Teste 1: Verificar API de autenticação
-  try {
-    const start = Date.now();
-    const { data, error } = await supabase.auth.getSession();
-    const elapsed = Date.now() - start;
-    
-    result.authStatus = !error;
-    details.push(`Autenticação: ${!error ? 'OK' : 'Falha'} (${elapsed}ms)`);
-    details.push(`- Sessão: ${data.session ? 'Ativa' : 'Inativa'}`);
-    
-    if (error) {
-      details.push(`- Erro: ${error.message}`);
-    }
-  } catch (e) {
-    details.push(`Autenticação: Exceção - ${e instanceof Error ? e.message : String(e)}`);
-  }
-  
-  // Teste 2: Verificar acesso ao banco de dados (tabela simples)
-  try {
-    const start = Date.now();
-    const { error } = await supabase.from('users').select('count', { count: 'exact', head: true });
-    const elapsed = Date.now() - start;
-    
-    result.dbStatus = !error;
-    details.push(`Banco de dados: ${!error ? 'OK' : 'Falha'} (${elapsed}ms)`);
-    
-    if (error) {
-      details.push(`- Erro: ${error.message}`);
-    }
-  } catch (e) {
-    details.push(`Banco de dados: Exceção - ${e instanceof Error ? e.message : String(e)}`);
-  }
-  
-  // Teste 3: Verificar acesso à tabela de usuários
-  if (result.authStatus) {
-    try {
-      const { data: session } = await supabase.auth.getSession();
-      if (session.session) {
-        const start = Date.now();
-        const { data, error } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', session.session.user.id)
-          .single();
-        const elapsed = Date.now() - start;
-        
-        result.userTableStatus = !error && !!data;
-        details.push(`Tabela de usuários: ${!error && !!data ? 'OK' : 'Falha'} (${elapsed}ms)`);
-        
-        if (error) {
-          details.push(`- Erro: ${error.message}`);
-        }
-      } else {
-        details.push(`Tabela de usuários: Não testada (sem sessão)`);
-      }
-    } catch (e) {
-      details.push(`Tabela de usuários: Exceção - ${e instanceof Error ? e.message : String(e)}`);
-    }
-  } else {
-    details.push(`Tabela de usuários: Não testada (autenticação falhou)`);
-  }
-  
-  // Teste 4: Verificar acesso ao armazenamento
-  try {
-    const start = Date.now();
-    const { data, error } = await supabase.storage.getBucket('exchanges');
-    const elapsed = Date.now() - start;
-    
-    result.storageStatus = !error;
-    details.push(`Armazenamento: ${!error ? 'OK' : 'Falha'} (${elapsed}ms)`);
-    
-    if (error) {
-      details.push(`- Erro: ${error.message}`);
-    }
-  } catch (e) {
-    details.push(`Armazenamento: Exceção - ${e instanceof Error ? e.message : String(e)}`);
-  }
-  
-  return result;
-};
-
-// Adicionar função auxiliar para verificar latência do Supabase
-export const measureSupabaseLatency = async (): Promise<number> => {
-  try {
-    const start = Date.now();
-    await supabase.from('users').select('count', { count: 'exact', head: true });
-    return Date.now() - start;
-  } catch (e) {
-    console.error('Erro ao medir latência:', e);
-    return -1;
-  }
-};
-
-// Adicionar cache em memória para resultados de pesquisas frequentes
-const memoryCache: Record<string, {data: any, expiry: number}> = {};
-
-// Função para retornar dados da cache ou buscar novos
-export const getCachedOrFetch = async (
-  key: string, 
-  fetchFn: () => Promise<any>, 
-  expirySeconds = 60
-): Promise<any> => {
-  const now = Date.now();
-  
-  // Verificar se temos em cache e se ainda é válido
-  if (memoryCache[key] && memoryCache[key].expiry > now) {
-    console.log(`Usando dados em cache para: ${key}`);
-    return memoryCache[key].data;
-  }
-  
-  // Caso contrário, buscar dados frescos
-  console.log(`Buscando dados frescos para: ${key}`);
-  try {
-    const result = await fetchFn();
-    
-    // Armazenar em cache
-    memoryCache[key] = {
-      data: result,
-      expiry: now + (expirySeconds * 1000)
-    };
-    
-    return result;
-  } catch (error) {
-    console.error(`Erro ao buscar dados para ${key}:`, error);
-    
-    // Se temos dados em cache, mesmo expirados, usamos como fallback
-    if (memoryCache[key]) {
-      console.log(`Usando dados em cache expirados como fallback para: ${key}`);
-      memoryCache[key].expiry = now + (30 * 1000); // Estender por mais 30 segundos
-      return memoryCache[key].data;
-    }
-    
-    throw error;
-  }
-};
-
-// Função para testar explicitamente a configuração e conexão com Supabase
-export const testSupabaseConfig = async (): Promise<{
+// Funções de diagnóstico e teste da conexão com o Supabase
+export interface SupabaseTestResult {
   success: boolean;
   message: string;
-  details: Record<string, any>;
-}> => {
-  console.log('Testando configuração do Supabase...');
-  
-  const details: Record<string, any> = {
-    supabaseUrl: supabaseUrl || 'Não definido',
-    apiKeyLength: supabaseKey ? supabaseKey.length : 0,
-    apiKeyDefined: !!supabaseKey,
-  };
-  
+  latency?: number;
+  details?: any;
+}
+
+export const testSupabaseConnection = async (): Promise<SupabaseTestResult> => {
   try {
-    // Teste 1: Verificar se as variáveis de ambiente estão definidas
-    if (!supabaseUrl || !supabaseKey) {
-      return {
-        success: false,
-        message: 'Variáveis de ambiente do Supabase não estão definidas corretamente',
-        details
-      };
-    }
+    const startTime = performance.now();
     
-    // Teste 2: Fazer uma requisição simples para verificar a autenticação
-    console.log('Fazendo teste de requisição básica ao Supabase...');
+    // Teste simples para verificar conectividade básica
+    const { data, error } = await supabase.rpc('ping');
     
-    // Criamos uma nova instância do cliente para testar explicitamente
-    const testClient = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      },
-      headers: {
-        'apikey': supabaseKey,
-        'Authorization': `Bearer ${supabaseKey}`
-      }
-    });
+    const endTime = performance.now();
+    const latency = Math.round(endTime - startTime);
     
-    // Tentar fazer uma requisição simples
-    const { error } = await testClient
-      .from('users')
-      .select('count', { count: 'exact', head: true });
-      
     if (error) {
-      console.error('Erro na requisição de teste:', error);
-      details.error = error;
-      
-      // Verificar se é um erro de API key
-      if (error.message?.includes('API key') || error.code === '401') {
-        return {
-          success: false,
-          message: 'Chave API do Supabase inválida ou não está sendo enviada corretamente',
-          details
-        };
-      }
-      
       return {
         success: false,
-        message: `Erro ao conectar ao Supabase: ${error.message}`,
-        details
+        message: `Erro na conexão: ${error.message}`,
+        latency
       };
     }
     
-    // Teste 3: Verificar autenticação
-    const { data: authData, error: authError } = await testClient.auth.getSession();
-    
-    details.sessionExists = !!authData?.session;
-    
-    if (authError) {
-      console.error('Erro ao verificar autenticação:', authError);
-      details.authError = authError;
+    if (data !== 'pong') {
+      return {
+        success: false,
+        message: `Resposta inesperada do servidor: ${data}`,
+        latency
+      };
     }
+    
+    // Conexão bem-sucedida
+    return {
+      success: true,
+      message: `Conexão estabelecida com sucesso (${latency}ms)`,
+      latency
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Erro ao testar conexão: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+};
+
+export const measureSupabaseLatency = async (iterations = 3): Promise<SupabaseTestResult> => {
+  try {
+    const latencies: number[] = [];
+    let successCount = 0;
+    
+    for (let i = 0; i < iterations; i++) {
+      const startTime = performance.now();
+      
+      try {
+        const { error } = await supabase.rpc('ping');
+        const endTime = performance.now();
+        
+        if (!error) {
+          successCount++;
+          latencies.push(Math.round(endTime - startTime));
+        }
+      } catch (e) {
+        // Ignorar erro e continuar com próximas iterações
+      }
+      
+      // Pequena pausa entre as iterações
+      if (i < iterations - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+    
+    if (latencies.length === 0) {
+      return {
+        success: false,
+        message: 'Não foi possível medir a latência - todas as tentativas falharam'
+      };
+    }
+    
+    // Calcular média, mínimo e máximo
+    const avgLatency = Math.round(latencies.reduce((sum, val) => sum + val, 0) / latencies.length);
+    const minLatency = Math.min(...latencies);
+    const maxLatency = Math.max(...latencies);
     
     return {
       success: true,
-      message: 'Configuração do Supabase parece estar correta',
-      details
+      message: `Latência média: ${avgLatency}ms (min: ${minLatency}ms, max: ${maxLatency}ms)`,
+      latency: avgLatency,
+      details: {
+        successRate: `${Math.round((successCount / iterations) * 100)}%`,
+        min: minLatency,
+        max: maxLatency,
+        values: latencies
+      }
     };
-  } catch (e) {
-    console.error('Erro grave ao testar configuração do Supabase:', e);
-    details.criticalError = e instanceof Error ? e.message : String(e);
-    
+  } catch (error) {
     return {
       success: false,
-      message: 'Erro grave ao testar configuração do Supabase',
-      details
+      message: `Erro ao medir latência: ${error instanceof Error ? error.message : String(error)}`
     };
   }
 };
 
-// Exportar tipo de retorno da função de teste
-export type SupabaseTestResult = Awaited<ReturnType<typeof testSupabaseConfig>>;
-
-// Função para criar ou atualizar um usuário se já existe (upsert)
-export const upsertUser = async (user: User): Promise<{ success: boolean; error?: any }> => {
+export const testSupabaseConfig = async (): Promise<SupabaseTestResult> => {
   try {
-    console.log(`Tentando upsert para usuário: ${user.id}`);
-    
-    // Verificar se o usuário já existe
-    const { data: existingUser, error: checkError } = await supabase
-      .from('users')
-      .select('id')
-      .eq('id', user.id)
-      .maybeSingle();
-      
-    if (checkError && !checkError.message.includes('No rows found')) {
-      console.error('Erro ao verificar existência do usuário:', checkError);
-      return { success: false, error: checkError };
-    }
-    
-    if (existingUser) {
-      // Atualizar usuário existente
-      console.log('Atualizando usuário existente:', user.id);
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({
-          name: user.name,
-          registration: user.registration,
-          email: user.email,
-          role: user.role,
-          status: user.status
-        })
-        .eq('id', user.id);
-        
-      if (updateError) {
-        console.error('Erro ao atualizar usuário:', updateError);
-        return { success: false, error: updateError };
-      }
-      
-      console.log('Usuário atualizado com sucesso');
-      return { success: true };
-    } else {
-      // Inserir novo usuário
-      console.log('Criando novo usuário:', user.id);
-      const { error: insertError } = await supabase
-        .from('users')
-        .insert([{
-          id: user.id,
-          name: user.name,
-          registration: user.registration,
-          email: user.email,
-          role: user.role,
-          status: user.status
-        }]);
-        
-      if (insertError) {
-        console.error('Erro ao criar usuário:', insertError);
-        
-        // Segunda tentativa com merge
-        console.log('Tentando inserção com merge...');
-        const { error: mergeError } = await supabase
-          .from('users')
-          .insert([{
-            id: user.id,
-            name: user.name,
-            registration: user.registration,
-            email: user.email,
-            role: user.role,
-            status: user.status
-          }])
-          .onConflict('id')
-          .merge();
-          
-        if (mergeError) {
-          console.error('Erro também na inserção com merge:', mergeError);
-          return { success: false, error: mergeError };
-        }
-        
-        console.log('Usuário inserido com sucesso usando merge');
-        return { success: true };
-      }
-      
-      console.log('Usuário inserido com sucesso');
-      return { success: true };
-    }
-  } catch (error) {
-    console.error('Erro durante upsert de usuário:', error);
-    return { success: false, error };
-  }
-};
-
-// Função para verificar rapidamente a conexão com o Supabase
-export const quickConnectionCheck = async (): Promise<{ ok: boolean, latency: number, message: string }> => {
-  console.log('Executando verificação rápida de conexão com Supabase...');
-  
-  try {
-    const startTime = Date.now();
-    
-    // Verificar se temos as configurações básicas
+    // Verificar URL e chave do Supabase
     if (!supabaseUrl || !supabaseKey) {
       return {
-        ok: false,
-        latency: -1,
-        message: 'Configurações do Supabase não encontradas'
+        success: false,
+        message: 'Configuração incompleta: URL ou chave do Supabase não definidas'
       };
     }
     
-    // Fazer uma requisição simples que não exige autenticação
-    const { error } = await supabase
-      .from('users')
-      .select('count', { count: 'exact', head: true })
-      .limit(1);
-    
-    const endTime = Date.now();
-    const latency = endTime - startTime;
-    
-    if (error) {
-      console.error('Erro na verificação rápida de conexão:', error);
-      
-      // Verificar se é um erro de API key
-      if (error.message?.includes('JWT') || error.message?.includes('key') || error.code === '401') {
-        return {
-          ok: false,
-          latency,
-          message: `Erro de API key: ${error.message}`
-        };
-      }
-      
-      // Verificar se é um erro de conexão
-      if (error.message?.includes('fetch') || error.message?.includes('network') || error.code === 'NETWORK_ERROR') {
-        return {
-          ok: false,
-          latency,
-          message: `Erro de conexão: ${error.message}`
-        };
-      }
-      
+    // Verificar formato da URL (deve começar com https:// e terminar com .supabase.co)
+    if (!supabaseUrl.startsWith('https://') || !supabaseUrl.includes('.supabase.co')) {
       return {
-        ok: false,
-        latency,
-        message: `Erro: ${error.message}`
+        success: false,
+        message: `URL do Supabase em formato inválido: ${supabaseUrl}`
       };
     }
     
+    // Verificar formato da chave (deve ser uma string longa)
+    if (supabaseKey.length < 30) {
+      return {
+        success: false,
+        message: 'Chave API do Supabase parece ser muito curta'
+      };
+    }
+    
+    // Verificar se RLS está ativado (importante para segurança)
+    const { data: rlsEnabled, error: rlsError } = await supabase.rpc('rls_enabled');
+    
+    if (rlsError) {
+      return {
+        success: false,
+        message: `Erro ao verificar RLS: ${rlsError.message}`
+      };
+    }
+    
+    if (!rlsEnabled) {
+      return {
+        success: false,
+        message: 'ALERTA DE SEGURANÇA: RLS (Row Level Security) está desativado!'
+      };
+    }
+    
+    // Tudo parece estar configurado corretamente
     return {
-      ok: true,
-      latency,
-      message: `Conexão OK (${latency}ms)`
+      success: true,
+      message: 'Configuração do Supabase está correta',
+      details: {
+        url: `${supabaseUrl.substring(0, 15)}...`,
+        keyLength: supabaseKey.length,
+        rlsEnabled
+      }
     };
   } catch (error) {
-    console.error('Exceção na verificação rápida de conexão:', error);
     return {
-      ok: false,
-      latency: -1,
-      message: error instanceof Error ? error.message : 'Erro desconhecido'
+      success: false,
+      message: `Erro ao testar configuração: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+};
+
+export const quickConnectionCheck = async (): Promise<{ok: boolean, message: string, latency: number}> => {
+  try {
+    const startTime = performance.now();
+    
+    // Tentativa rápida de ping
+    const { error } = await supabase.rpc('ping');
+    
+    const endTime = performance.now();
+    const latency = Math.round(endTime - startTime);
+    
+    if (error) {
+      if (error.message.includes('JWT')) {
+        return { ok: false, message: 'Erro de autenticação JWT', latency };
+      } else if (error.message.includes('API key')) {
+        return { ok: false, message: 'Problema com a API key', latency };
+      } else {
+        return { ok: false, message: error.message, latency };
+      }
+    }
+    
+    if (latency > 5000) {
+      return { ok: true, message: 'Conexão estabelecida, mas está lenta', latency };
+    }
+    
+    return { ok: true, message: 'Conexão OK', latency };
+  } catch (error) {
+    return { 
+      ok: false, 
+      message: error instanceof Error ? error.message : 'Erro desconhecido', 
+      latency: 0 
     };
   }
 };
@@ -946,4 +761,163 @@ export const countUnreadNotifications = async (userId?: string): Promise<Notific
 };
 
 // Re-exportação da função de cache e clearCache
-export { clearCache } from './cache'; 
+export { clearCache } from './cache';
+
+// Funções auxiliares para trabalhar com RPCs
+export const rpc = {
+  // Funções de administração
+  isAdmin: async (userId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('is_admin', { user_id: userId });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao verificar privilégios de administrador:', error);
+      return false;
+    }
+  },
+
+  promoteToAdmin: async (userId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('promote_to_admin', { target_user_id: userId });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao promover usuário a administrador:', error);
+      return false;
+    }
+  },
+
+  // Funções relacionadas a trocas/quebras
+  canUpdateExchange: async (exchangeId: string, userId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('can_update_exchange', { 
+        exchange_id: exchangeId,
+        user_id: userId 
+      });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao verificar permissões para atualizar troca:', error);
+      return false;
+    }
+  },
+
+  updateExchangeStatus: async (
+    exchangeId: string, 
+    newStatus: 'pending' | 'approved' | 'rejected', 
+    notes?: string
+  ): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('update_exchange_status', { 
+        exchange_id: exchangeId,
+        new_status: newStatus,
+        notes_text: notes || null
+      });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao atualizar status da troca:', error);
+      return false;
+    }
+  },
+
+  emergencyUpdateExchange: async (
+    exchangeId: string, 
+    newStatus: 'pending' | 'approved' | 'rejected', 
+    notes?: string,
+    adminId?: string
+  ): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('emergency_update_exchange', { 
+        exchange_id: exchangeId,
+        new_status: newStatus,
+        notes_text: notes || null,
+        admin_id: adminId || null
+      });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao realizar atualização de emergência da troca:', error);
+      return false;
+    }
+  },
+
+  // Funções relacionadas a usuário
+  getUserById: async (userId: string): Promise<any> => {
+    try {
+      const { data, error } = await supabase.rpc('get_user_by_id', { user_id: userId });
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Erro ao buscar usuário por ID:', error);
+      return null;
+    }
+  },
+
+  fixUserData: async (userId: string, newEmail?: string, newName?: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('fix_user_data', { 
+        user_id: userId,
+        new_email: newEmail || null,
+        new_name: newName || null
+      });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao corrigir dados do usuário:', error);
+      return false;
+    }
+  },
+
+  // Funções de diagnóstico
+  ping: async (): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('ping');
+      if (error) throw error;
+      return data === 'pong';
+    } catch (error) {
+      console.error('Erro ao verificar conectividade com o Supabase:', error);
+      return false;
+    }
+  },
+
+  rlsEnabled: async (): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('rls_enabled');
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao verificar status do RLS:', error);
+      return false;
+    }
+  },
+
+  diagnoseRegistrationIssues: async (email?: string, registration?: string): Promise<any> => {
+    try {
+      const { data, error } = await supabase.rpc('diagnose_registration_issues', {
+        email_to_check: email || null,
+        registration_to_check: registration || null
+      });
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error('Erro ao diagnosticar problemas de registro:', error);
+      return null;
+    }
+  },
+
+  // Funções de notificação
+  markAllNotificationsAsRead: async (userId: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase.rpc('mark_all_notifications_as_read', {
+        user_id: userId
+      });
+      if (error) throw error;
+      return !!data;
+    } catch (error) {
+      console.error('Erro ao marcar notificações como lidas:', error);
+      return false;
+    }
+  },
+}; 

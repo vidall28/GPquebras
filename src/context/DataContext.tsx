@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { toast } from '@/lib/toast';
-import { supabase, User, Tables, mappers, Exchange, Product } from '@/lib/supabase';
+import { supabase, User, Tables, mappers, rpc } from '@/lib/supabase';
 import { getCachedOrFetch, clearCache } from '@/lib/cache';
 import { useAuth } from './AuthContext';
 
@@ -827,93 +827,74 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
   
-  const updateExchange = async (
-    id: string,
-    status: 'pending' | 'approved' | 'rejected',
-    notes?: string,
-    updatedBy?: string
-  ): Promise<void> => {
+  // Atualizar troca/quebra (aprovação ou rejeição)
+  const updateExchange = async (id: string, status: 'pending' | 'approved' | 'rejected', notes?: string, updatedBy?: string) => {
+    setIsLoading(true);
+    
     try {
-      console.log(`[DEBUG] Iniciando updateExchange para a troca ID: ${id}, novo status: ${status}`);
-      setIsLoading(true);
-
-      // Atualização IMEDIATA do estado local para feedback instantâneo ao usuário
-      setExchanges((currentExchanges) => {
-        return currentExchanges.map((exchange) => {
-          if (exchange.id === id) {
-            console.log(`[DEBUG] Atualizando estado local para troca ID: ${id}`);
-            return {
-              ...exchange,
-              status: status,
-              notes: notes || exchange.notes,
-              updatedAt: new Date().toISOString()
-            };
-          }
-          return exchange;
-        });
-      });
-
-      // Simplificamos os dados enviados para evitar problemas de tipo
-      const updateData = {
-        status: status,
-        notes: notes || null,
-        updated_at: new Date().toISOString()
-        // Deliberadamente NÃO incluímos updated_by para evitar problemas de tipo
-      };
-
-      console.log(`[DEBUG] Dados para atualização:`, updateData);
-
-      // Estratégia principal: Atualização via API Supabase
-      const { error } = await supabase
-        .from('exchanges')
-        .update(updateData)
-        .eq('id', id);
-
-      if (error) {
-        console.error(`[ERROR] Falha ao atualizar via API: ${error.message}`);
-        
-        // Estratégia alternativa: Tentativa direta via SQL (evita algumas restrições)
-        console.log(`[DEBUG] Tentando atualização alternativa via SQL para troca ID: ${id}`);
-        
-        // Adicionamos um pequeno atraso para garantir consistência
-        await new Promise(resolve => setTimeout(resolve, 300));
-        
-        const { error: sqlError } = await supabase.rpc('update_exchange_status', {
-          exchange_id: id,
-          new_status: status,
-          exchange_notes: notes || null
-        });
-
-        if (sqlError) {
-          console.error(`[ERROR] Falha também na estratégia SQL: ${sqlError.message}`);
+      // Usar a função RPC para atualizar o status
+      const success = await rpc.updateExchangeStatus(id, status, notes);
+      
+      if (!success) {
+        throw new Error('Falha ao atualizar status');
+      }
+      
+      // Atualizar o estado local
+      setExchanges(prevExchanges => 
+        prevExchanges.map(exchange => 
+          exchange.id === id 
+            ? { 
+                ...exchange, 
+                status, 
+                notes: notes || exchange.notes, 
+                updatedAt: new Date().toISOString(),
+                updatedBy: updatedBy || user?.id || ''
+              } 
+            : exchange
+        )
+      );
+      
+      // Limpar cache para forçar recarregamento em outras sessões
+      clearCache('all_exchanges');
+      clearCache(`user_exchanges_${exchanges.find(e => e.id === id)?.userId}`);
+      
+      toast.success('Status atualizado com sucesso');
+    } catch (error) {
+      console.error('Erro ao atualizar status da troca/quebra:', error);
+      toast.error('Erro ao atualizar status');
+      
+      // Tentar uma atualização de emergência se normal falhar (apenas para admins)
+      if (isAdmin && user) {
+        try {
+          console.log('Tentando atualização de emergência como admin');
+          const success = await rpc.emergencyUpdateExchange(id, status, notes, user.id);
           
-          // Terceira tentativa: SQL direto sem função RPC
-          console.log(`[DEBUG] Tentativa final com SQL direto para troca ID: ${id}`);
-          const { error: directSqlError } = await supabase.rpc('emergency_update_exchange', {
-            p_id: id,
-            p_status: status,
-            p_notes: notes || null
-          });
-
-          if (directSqlError) {
-            console.error(`[ERROR] Todas as tentativas falharam: ${directSqlError.message}`);
-            throw new Error(`Falha ao atualizar troca após múltiplas tentativas: ${directSqlError.message}`);
+          if (success) {
+            // Atualizar o estado local
+            setExchanges(prevExchanges => 
+              prevExchanges.map(exchange => 
+                exchange.id === id 
+                  ? { 
+                      ...exchange, 
+                      status, 
+                      notes: notes || exchange.notes, 
+                      updatedAt: new Date().toISOString(),
+                      updatedBy: user.id
+                    } 
+                  : exchange
+              )
+            );
+            
+            clearCache('all_exchanges');
+            toast.success('Atualização de emergência realizada');
+          } else {
+            toast.error('Falha na atualização de emergência');
           }
+        } catch (emergencyError) {
+          console.error('Erro na atualização de emergência:', emergencyError);
+          toast.error('Falha na atualização de emergência');
         }
       }
-
-      console.log(`[DEBUG] Atualização concluída com sucesso para troca ID: ${id}`);
-      
-      // Mantemos o atraso antes de buscar os dados para garantir consistência
-      setTimeout(() => {
-        fetchExchangeAndUpdateState(id).catch(err => 
-          console.error(`[ERROR] Falha ao atualizar dados da troca: ${err.message}`)
-        );
-      }, 500);
-    } catch (error: any) {
-      console.error(`[ERROR] Erro crítico ao atualizar troca: ${error.message}`);
-      // NÃO revertemos o estado local - isso pode causar confusão para o usuário
-      // já que ele viu a mensagem de sucesso
     } finally {
       setIsLoading(false);
     }

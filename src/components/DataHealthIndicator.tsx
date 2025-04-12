@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Database, AlertTriangle, CheckCircle2, Clock, BarChart2 } from 'lucide-react';
+import { Database, AlertTriangle, CheckCircle2, Clock, BarChart2, X, Check } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { supabase, rpc } from '@/lib/supabase';
 
 // Tipo para rastrear as operações de banco de dados
 interface DatabaseOperation {
@@ -18,30 +19,18 @@ interface DatabaseOperation {
   query?: string;
 }
 
+// Estado global para armazenar operações recentes
+const recentOperations: DatabaseOperation[] = [];
+const MAX_OPERATIONS = 50;
+
 // Função para registrar operações de banco de dados
-export const registerDbOperation = (
-  operation: Omit<DatabaseOperation, 'id' | 'timestamp'>
-): void => {
-  const newOperation: DatabaseOperation = {
-    id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-    timestamp: Date.now(),
-    ...operation
-  };
+export const registerDbOperation = (operation: DatabaseOperation) => {
+  operation.timestamp = Date.now();
+  recentOperations.unshift(operation);
   
-  // Obter operações existentes
-  const currentOpsJson = localStorage.getItem('db_operations');
-  const currentOps: DatabaseOperation[] = currentOpsJson 
-    ? JSON.parse(currentOpsJson) 
-    : [];
-  
-  // Adicionar nova operação
-  const updatedOps = [newOperation, ...currentOps].slice(0, 100); // Manter apenas as 100 operações mais recentes
-  
-  // Salvar no localStorage
-  localStorage.setItem('db_operations', JSON.stringify(updatedOps));
-  
-  // Acionar evento personalizado para notificar componentes interessados
-  window.dispatchEvent(new CustomEvent('db-operation', { detail: newOperation }));
+  if (recentOperations.length > MAX_OPERATIONS) {
+    recentOperations.pop();
+  }
 };
 
 export function DataHealthIndicator() {
@@ -49,6 +38,11 @@ export function DataHealthIndicator() {
   const [expanded, setExpanded] = useState(false);
   const [healthScore, setHealthScore] = useState(100);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [status, setStatus] = useState<'healthy' | 'warning' | 'error' | 'unknown'>('unknown');
+  const [ping, setPing] = useState<number | null>(null);
+  const [isRlsEnabled, setIsRlsEnabled] = useState<boolean | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const [lastCheck, setLastCheck] = useState<Date>(new Date());
   
   // Carregar operações salvas
   useEffect(() => {
@@ -148,6 +142,71 @@ export function DataHealthIndicator() {
   
   const summary = getOperationsSummary();
   const healthStatus = getHealthStatus();
+  
+  // Função para verificar o status da conexão
+  const checkConnection = async () => {
+    try {
+      // Verificar o tempo de resposta do banco
+      const startTime = performance.now();
+      const isPingOk = await rpc.ping();
+      const endTime = performance.now();
+      const pingTime = Math.round(endTime - startTime);
+      setPing(pingTime);
+      
+      // Verificar se RLS está habilitado
+      const rlsEnabled = await rpc.rlsEnabled();
+      setIsRlsEnabled(rlsEnabled);
+      
+      // Analisar operações recentes
+      const errorCount = recentOperations.filter(op => !op.success).length;
+      const errorRate = recentOperations.length ? errorCount / recentOperations.length : 0;
+      
+      // Determinar o status
+      if (!isPingOk) {
+        setStatus('error');
+      } else if (errorRate > 0.2 || pingTime > 2000) { // 20% de erros ou ping > 2s
+        setStatus('warning');
+      } else {
+        setStatus('healthy');
+      }
+      
+      setLastCheck(new Date());
+    } catch (error) {
+      console.error('Erro ao verificar conexão com banco de dados:', error);
+      setStatus('error');
+      setLastCheck(new Date());
+    }
+  };
+  
+  // Verificar a conexão periodicamente
+  useEffect(() => {
+    checkConnection();
+    
+    const interval = setInterval(() => {
+      checkConnection();
+    }, 60000); // Verificar a cada minuto
+    
+    return () => clearInterval(interval);
+  }, []);
+  
+  // Definir a cor e ícone com base no status
+  const getStatusColor = () => {
+    switch (status) {
+      case 'healthy': return 'bg-green-500';
+      case 'warning': return 'bg-yellow-500';
+      case 'error': return 'bg-red-500';
+      default: return 'bg-gray-500';
+    }
+  };
+  
+  const getStatusIcon = () => {
+    switch (status) {
+      case 'healthy': return <Check size={12} />;
+      case 'warning': return <AlertTriangle size={12} />;
+      case 'error': return <X size={12} />;
+      default: return <Clock size={12} />;
+    }
+  };
   
   return (
     <Card className={expanded ? "w-96" : "w-64"}>
@@ -337,4 +396,6 @@ export function DataHealthIndicator() {
       </CardFooter>
     </Card>
   );
-} 
+}
+
+export default DataHealthIndicator; 
