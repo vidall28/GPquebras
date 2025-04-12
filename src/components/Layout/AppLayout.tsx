@@ -44,10 +44,12 @@ export const AppLayout: React.FC = () => {
   
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* Status de Conexão */}
-      <ConnectionStatus />
+      {/* --- INÍCIO: COMENTAR FILHOS PARA DEBUG --- */}
+      {/* Status de Conexão 
+      <ConnectionStatus /> 
+      */}
       
-      {/* Sidebar */}
+      {/* Sidebar 
       <div
         className={cn(
           "fixed inset-y-0 left-0 z-50 w-64 transform transition-transform duration-300 ease-in-out bg-white border-r border-border shadow-sm",
@@ -57,71 +59,29 @@ export const AppLayout: React.FC = () => {
       >
         <Sidebar onClose={() => setIsSidebarOpen(false)} />
       </div>
+      */}
       
-      {/* Mobile Overlay */}
+      {/* Mobile Overlay 
       {isMobile && isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}
+      */}
       
-      {/* Main Content */}
+      {/* Main Content - Manter estrutura básica e Outlet */}
       <div className={cn(
         "flex flex-col flex-1 overflow-hidden transition-all duration-300 ease-in-out",
-        isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0")
+        // Aplicar alguma lógica de margem simples ou nenhuma para teste
+        // isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0")
+        "w-full" 
       )}>
-        {/* Header */}
+        {/* Header 
         <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 border-b bg-background/90 backdrop-blur-sm">
-          <div className="flex items-center gap-4">
-            {/* Mobile sidebar toggle */}
-            <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
-              className="md:hidden p-2 rounded-md hover:bg-accent flex items-center justify-center"
-            >
-              <svg 
-                xmlns="http://www.w3.org/2000/svg" 
-                width="20" 
-                height="20" 
-                viewBox="0 0 24 24" 
-                fill="none" 
-                stroke="currentColor" 
-                strokeWidth="2" 
-                strokeLinecap="round" 
-                strokeLinejoin="round"
-              >
-                <line x1="3" y1="12" x2="21" y2="12"></line>
-                <line x1="3" y1="6" x2="21" y2="6"></line>
-                <line x1="3" y1="18" x2="21" y2="18"></line>
-              </svg>
-            </button>
-            
-            {/* Logo - visible only on desktop when sidebar is closed */}
-            {!isMobile && !isSidebarOpen && (
-              <h1 className="text-xl font-semibold">GP Quebras e Trocas</h1>
-            )}
-          </div>
-          
-          {/* User Info */}
-          <div className="flex items-center gap-4">
-            <NotificationDropdown />
-            <div className="flex flex-col justify-center">
-              <span className="text-sm">{user?.name || 'Usuário'}</span>
-              <span className="text-xs text-muted-foreground">Matrícula: {user?.registration || 'N/A'}</span>
-            </div>
-            <span className="text-xs font-medium px-2 py-1 bg-primary/10 text-primary rounded-full">
-              {isAdmin ? 'Administrador' : 'Usuário'}
-            </span>
-            <button 
-              onClick={logout}
-              className="p-2 rounded-full hover:bg-accent flex items-center justify-center"
-              aria-label="Sair"
-              title="Sair"
-            >
-              <LogOut size={18} />
-            </button>
-          </div>
+          // ... Conteúdo do header comentado ...
         </header>
+        */}
         
         {/* Page Content */}
         <main className="flex-1 overflow-auto">
@@ -130,12 +90,14 @@ export const AppLayout: React.FC = () => {
           </div>
         </main>
         
-        {/* Data Health Indicator (only for admins) */}
+        {/* Data Health Indicator 
         {showDataHealth && (
           <div className="fixed bottom-4 right-4 z-50">
             <DataHealthIndicator />
           </div>
         )}
+        */}
+       {/* --- FIM: COMENTAR FILHOS PARA DEBUG --- */}
       </div>
     </div>
   );
