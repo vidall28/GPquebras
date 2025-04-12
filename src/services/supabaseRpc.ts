@@ -4,43 +4,44 @@ import { clearCache } from '@/lib/cache'; // Importar clearCache se upsertUser o
 
 // --- Funções RPC Individuais (Exemplo: verificação de admin, notificações) ---
 
-// Interface para os parâmetros da RPC 'is_admin'
-interface IsAdminParams {
-  user_id: string; // Verificar se este é o nome correto do parâmetro na sua definição de RPC
+// Interface para os parâmetros da RPC
+interface CheckIfAdminParams {
+  user_id: string; // Corrigido para user_id conforme a imagem
 }
 
-// Função para verificar se o usuário é administrador via RPC 'is_admin' com timeout
+// Função para verificar se o usuário é administrador via RPC com timeout
 export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
   if (!userId) {
     console.error('checkIfUserIsAdmin: ID do usuário não fornecido');
     return false;
   }
 
-  console.log(`Verificando se o usuário ${userId} é administrador via RPC 'is_admin'...`);
+  console.log(`Verificando se o usuário ${userId} é administrador via RPC 'check_if_admin'...`);
 
   return new Promise((resolve) => {
     const timeoutId = setTimeout(() => {
-      console.warn(`Timeout (3s) ao verificar status de admin para ${userId} via RPC 'is_admin'`);
+      console.warn(`Timeout (3s) ao verificar status de admin para ${userId} via RPC 'check_if_admin'`);
       resolve(false);
     }, 3000);
 
     (async () => {
       try {
-        const params: IsAdminParams = { user_id: userId };
-        const { data: isAdmin, error: rpcError } = await supabase.rpc('is_admin', params);
+        // Corrigido para usar user_id no parâmetro
+        const params: CheckIfAdminParams = { user_id: userId }; 
+        const { data: isAdmin, error: rpcError } = await supabase.rpc('check_if_admin', params); 
 
         clearTimeout(timeoutId);
 
         if (rpcError) {
-          console.error(`Erro ao chamar RPC 'is_admin' para ${userId}:`, rpcError);
+          console.error(`Erro ao chamar RPC 'check_if_admin' para ${userId}:`, rpcError);
           resolve(false);
         } else {
-          console.log(`Usuário ${userId} ${isAdmin ? 'é' : 'não é'} administrador (RPC 'is_admin')`);
+          console.log(`Usuário ${userId} ${isAdmin ? 'é' : 'não é'} administrador (RPC 'check_if_admin')`);
           resolve(!!isAdmin);
         }
       } catch (e) {
         clearTimeout(timeoutId);
-        console.error(`Erro geral ao verificar admin para ${userId} via RPC 'is_admin':`, e);
+        console.error(`Erro geral ao verificar admin para ${userId} via RPC 'check_if_admin':`, e);
         resolve(false);
       }
     })();
@@ -104,11 +105,14 @@ export const upsertUser = async (user: User): Promise<void> => {
       console.log(`User ${user.id} inserted successfully.`);
     }
     
-    // Limpar cache após a operação
-    clearCache(['users', `user_${user.id}`]); 
+    // Limpar cache após a operação (chamadas separadas)
+    clearCache('users'); 
+    clearCache(`user_${user.id}`);
 
   } catch (error) {
     console.error('Erro ao fazer upsert do usuário:', error);
+    // Re-lançar o erro pode ser útil se o chamador precisar saber
+    // throw error;
   }
 };
 
