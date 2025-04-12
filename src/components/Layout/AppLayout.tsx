@@ -44,9 +44,9 @@ export const AppLayout: React.FC = () => {
   
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* --- INÍCIO: RESTAURAR OUTROS FILHOS --- */}
-      {/* Status de Conexão */}
-      <ConnectionStatus /> 
+      {/* --- INÍCIO: COMENTAR ConnectionStatus e DataHealth --- */}
+      {/* Status de Conexão - COMENTADO */}
+      {/* <ConnectionStatus /> */}
       
       
       {/* Sidebar - COMENTADO PARA DEBUG */}
@@ -62,7 +62,7 @@ export const AppLayout: React.FC = () => {
       </div>
       */}
       
-      {/* Mobile Overlay */}
+      {/* Mobile Overlay - Mantido (depende de isSidebarOpen state) */}
       {isMobile && isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40"
@@ -74,9 +74,7 @@ export const AppLayout: React.FC = () => {
       {/* Main Content - Manter estrutura básica e Outlet */}
       <div className={cn(
         "flex flex-col flex-1 overflow-hidden transition-all duration-300 ease-in-out",
-        // Restaurar lógica de margem
-        isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0")
-        //"w-full" 
+        isMobile ? "w-full" : (isSidebarOpen ? "ml-64" : "ml-0") 
       )}>
         {/* Header - RESTAURADO (Exceto NotificationDropdown) */}
         <header className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 border-b bg-background/90 backdrop-blur-sm">
@@ -138,14 +136,16 @@ export const AppLayout: React.FC = () => {
           </div>
         </main>
         
-        {/* Data Health Indicator */}
+        {/* Data Health Indicator - COMENTADO */}
+        {/* 
         {showDataHealth && (
           <div className="fixed bottom-4 right-4 z-50">
             <DataHealthIndicator />
           </div>
         )}
+        */}
         
-       {/* --- FIM: RESTAURAR OUTROS FILHOS --- */}
+       {/* --- FIM: COMENTAR ConnectionStatus e DataHealth --- */}
       </div>
     </div>
   );
