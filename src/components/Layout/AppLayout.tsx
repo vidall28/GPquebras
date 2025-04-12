@@ -38,11 +38,6 @@ export const AppLayout: React.FC = () => {
     }
   }, [location.pathname, isMobile]);
   
-  // If not authenticated, redirect to login
-  if (!isAuthenticated) {
-    return <Navigate to="/login" />;
-  }
-
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
       {/* Status de Conexão */}
