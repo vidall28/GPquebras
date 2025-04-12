@@ -266,58 +266,58 @@ export const checkIfUserIsAdmin = async (userId: string): Promise<boolean> => {
           const userEmail = authUser?.user?.email;
           
           if (userEmail && ADMIN_EMAILS.includes(userEmail)) {
-            console.log(`Usuário ${userId} identificado como admin via email: ${userEmail}`);
+            console.log(`Usuário ${userId} é administrador via email`);
             clearTimeout(timeoutId);
-            return resolve(true);
+            resolve(true);
+            return;
           }
-          
-          const userMeta = authUser?.user?.user_metadata;
-          if (userMeta && userMeta.role === 'admin') {
-            console.log(`Usuário ${userId} identificado como admin via metadados`);
-            clearTimeout(timeoutId);
-            return resolve(true);
-          }
-        } catch (metaError) {
-          console.error('Erro ao verificar admin via metadados:', metaError);
+        } catch (e) {
+          console.error('Erro ao verificar metadados do usuário:', e);
         }
         
-        // 2. Verificar diretamente na tabela de usuários (mais rápido que RPC)
+        // 2. Verificar diretamente na tabela de usuários
         try {
-          console.log(`Verificando admin para usuário ${userId} via tabela users...`);
           const { data: userData, error: userError } = await supabase
             .from('users')
             .select('role')
             .eq('id', userId)
-            .maybeSingle();
-          
-          if (!userError && userData && userData.role === 'admin') {
-            console.log(`Usuário ${userId} identificado como admin via tabela users`);
+            .single();
+            
+          if (!userError && userData) {
+            const isAdmin = userData.role === 'admin';
+            console.log(`Usuário ${userId} ${isAdmin ? 'é' : 'não é'} administrador via tabela de usuários`);
             clearTimeout(timeoutId);
-            return resolve(true);
+            resolve(isAdmin);
+            return;
           }
-        } catch (dbError) {
-          console.error('Erro ao verificar admin via tabela users:', dbError);
+        } catch (e) {
+          console.error('Erro ao verificar tabela de usuários:', e);
         }
         
-        // 3. Por último, tentar o RPC (pode ser mais lento)
-        console.log(`Chamando o procedimento check_if_admin para o usuário ${userId}`);
-        const { data, error } = await supabase.rpc('check_if_admin', { user_id: userId });
-        
-        // Limpar o timeout, pois a requisição foi concluída
-        clearTimeout(timeoutId);
-        
-        if (error) {
-          console.error('Erro ao verificar status de administrador via RPC:', error);
-          return resolve(false);
+        // 3. Verificar via RPC (mais confiável, mas pode ser mais lento)
+        try {
+          const { data: isAdmin, error: rpcError } = await supabase.rpc('is_admin', {
+            user_id: userId
+          });
+          
+          if (!rpcError) {
+            console.log(`Usuário ${userId} ${isAdmin ? 'é' : 'não é'} administrador via RPC`);
+            clearTimeout(timeoutId);
+            resolve(!!isAdmin);
+            return;
+          }
+        } catch (e) {
+          console.error('Erro ao verificar admin via RPC:', e);
         }
         
-        console.log(`Resultado da verificação de admin para o usuário ${userId}:`, data);
-        return resolve(!!data);
-      } catch (error) {
-        // Limpar o timeout em caso de erro
+        // Se chegou aqui, nenhum método funcionou, mas o timeout ainda não acionou
+        console.warn(`Nenhum método de verificação de admin funcionou para o usuário ${userId}`);
         clearTimeout(timeoutId);
-        console.error('Exceção ao verificar status de administrador:', error);
-        return resolve(false);
+        resolve(false);
+      } catch (e) {
+        console.error(`Erro geral ao verificar admin para ${userId}:`, e);
+        clearTimeout(timeoutId);
+        resolve(false);
       }
     })();
   });
@@ -920,4 +920,92 @@ export const rpc = {
       return false;
     }
   },
+};
+
+// Função para criar ou atualizar um usuário se já existe (upsert)
+export const upsertUser = async (user: User): Promise<{ success: boolean; error?: any }> => {
+  try {
+    console.log(`Tentando upsert para usuário: ${user.id}`);
+    
+    // Verificar se o usuário já existe
+    const { data: existingUser, error: checkError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', user.id)
+      .maybeSingle();
+      
+    if (checkError && !checkError.message.includes('No rows found')) {
+      console.error('Erro ao verificar existência do usuário:', checkError);
+      return { success: false, error: checkError };
+    }
+    
+    if (existingUser) {
+      // Atualizar usuário existente
+      console.log('Atualizando usuário existente:', user.id);
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({
+          name: user.name,
+          registration: user.registration,
+          email: user.email,
+          role: user.role,
+          status: user.status
+        })
+        .eq('id', user.id);
+        
+      if (updateError) {
+        console.error('Erro ao atualizar usuário:', updateError);
+        return { success: false, error: updateError };
+      }
+      
+      console.log('Usuário atualizado com sucesso');
+      return { success: true };
+    } else {
+      // Inserir novo usuário
+      console.log('Criando novo usuário:', user.id);
+      const { error: insertError } = await supabase
+        .from('users')
+        .insert([{
+          id: user.id,
+          name: user.name,
+          registration: user.registration,
+          email: user.email,
+          role: user.role,
+          status: user.status
+        }]);
+        
+      if (insertError) {
+        console.error('Erro ao criar usuário:', insertError);
+        
+        // Segunda tentativa com merge
+        console.log('Tentando inserção com merge...');
+        const { error: mergeError } = await supabase
+          .from('users')
+          .insert([{
+            id: user.id,
+            name: user.name,
+            registration: user.registration,
+            email: user.email,
+            role: user.role,
+            status: user.status
+          }])
+          .onConflict('id')
+          .merge();
+          
+        if (mergeError) {
+          console.error('Erro também na inserção com merge:', mergeError);
+          return { success: false, error: mergeError };
+        }
+        
+        console.log('Usuário inserido com sucesso usando merge');
+        return { success: true };
+      }
+      
+      console.log('Usuário inserido com sucesso');
+      return { success: true };
+    }
+  } catch (error) {
+    console.error('Erro durante upsert de usuário:', error);
+    return { success: false, error };
+  }
 }; 
