@@ -209,17 +209,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []); // Executa apenas uma vez na montagem
 
+  // useEffect para inicializar sistemas dependentes do usuário
   useEffect(() => {
     if (user) {
-      console.log("Usuário autenticado, inicializando sistemas avançados");
-      // Inicializar o sistema de notificações quando o usuário estiver autenticado
-      useNotifications.init(user.id);
-      // Inicializar o gerenciador de modo offline
-      ensureOfflineManagerInitialized(user.id);
+      console.log("Usuário autenticado, inicializando sistemas avançados (NOTIFICAÇÕES E OFFLINE TEMPORARIAMENTE DESABILITADOS PARA DEBUG)");
       
-      console.log('Sistemas de notificações e offline inicializados para o usuário:', user.id);
+      // TEMPORARIAMENTE COMENTADO PARA DEBUG DE RECURSÃO:
+      // try {
+      //   useNotifications.init(user.id);
+      // } catch (e) {
+      //   console.error("Erro ao inicializar notificações:", e);
+      // }
+      // try {
+      //   ensureOfflineManagerInitialized(user.id);
+      // } catch (e) {
+      //   console.error("Erro ao inicializar offline manager:", e);
+      // }
+      
+      // console.log('Sistemas de notificações e offline inicializados para o usuário:', user.id);
+    } else {
+      console.log("Usuário não autenticado, garantindo que sistemas (notificações/offline) não estão ativos.");
+      // Adicionar lógicas de limpeza aqui se necessário quando o usuário desloga
     }
-  }, [user]);
+  }, [user]); // Depende do estado 'user'
 
   // Login function (simplificada)
   const login = async (email: string, password: string) => {
