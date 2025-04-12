@@ -110,7 +110,7 @@ export const AppLayout: React.FC = () => {
           
           {/* User Info */}
           <div className="flex items-center gap-4">
-            <NotificationDropdown />
+            {/* <NotificationDropdown /> - COMENTADO PARA DEBUG */}
             <div className="flex flex-col justify-center">
               <span className="text-sm">{user?.name || 'Usuário'}</span>
               <span className="text-xs text-muted-foreground">Matrícula: {user?.registration || 'N/A'}</span>
