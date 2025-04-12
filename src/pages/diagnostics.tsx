@@ -7,10 +7,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { 
   supabase, 
-  testSupabaseConnection, 
-  measureSupabaseLatency, 
-  ADMIN_EMAILS,
-  testSupabaseConfig,
+  testSupabaseConnection,
+  measureSupabaseLatency,
   type SupabaseTestResult,
   checkIfUserIsAdmin
 } from '@/lib/supabase';
@@ -71,42 +69,6 @@ const resetSupabaseClient = async () => {
     console.error('Erro crítico ao reinicializar cliente Supabase:', e);
     toast.error('Erro ao reinicializar cliente Supabase');
     return false;
-  }
-};
-
-// Função para testar a conexão com o Supabase
-const testSupabaseConnection = async () => {
-  console.log('Testando conexão com o Supabase...');
-  
-  try {
-    const startTime = Date.now();
-    const { data, error } = await supabase.from('users').select('id').limit(1);
-    const endTime = Date.now();
-    
-    if (error) {
-      console.error('Erro ao testar conexão:', error);
-      return {
-        success: false,
-        message: `Erro: ${error.message} (${error.code})`,
-        latency: endTime - startTime,
-        details: JSON.stringify(error, null, 2)
-      };
-    }
-    
-    return {
-      success: true,
-      message: 'Conexão bem-sucedida',
-      latency: endTime - startTime,
-      details: `Resposta recebida em ${endTime - startTime}ms`
-    };
-  } catch (error) {
-    console.error('Exceção ao testar conexão:', error);
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : 'Erro desconhecido',
-      latency: -1,
-      details: error instanceof Error ? error.stack : JSON.stringify(error)
-    };
   }
 };
 
@@ -474,39 +436,17 @@ const DiagnosticsPage: React.FC = () => {
 
   // Testar configuração do Supabase
   const testConfig = async () => {
-    setIsLoading(true);
+    setIsTestingConfig(true);
+    setConfigTestResult(null);
     try {
-      // Capturar variáveis de ambiente disponíveis para diagnóstico
-      const env: {[key: string]: string} = {};
-      Object.keys(import.meta.env).forEach(key => {
-        if (key.startsWith('VITE_')) {
-          // Ocultar parte do valor para segurança, mostrando apenas início e fim
-          const value = import.meta.env[key];
-          if (typeof value === 'string' && value.length > 10) {
-            env[key] = `${value.substring(0, 5)}...${value.substring(value.length - 5)}`;
-          } else if (typeof value === 'string') {
-            env[key] = `${value.substring(0, 2)}...`;
-          } else {
-            env[key] = typeof value;
-          }
-        }
-      });
-      
-      setEnvVars(env);
-      
-      const result = await testSupabaseConfig();
-      setConfigTest(result);
-      
-      if (result.success) {
-        toast.success('Configuração do Supabase está correta');
-      } else {
-        toast.error(`Problema na configuração: ${result.message}`);
-      }
+      // Corrigir a chamada para usar checkSupabaseConfig
+      const result = checkSupabaseConfig(); 
+      setConfigTestResult(result);
     } catch (error) {
-      console.error('Erro ao testar configuração:', error);
-      toast.error('Erro ao testar configuração do Supabase');
+       console.error("Erro ao verificar config:", error);
+       // Tratar erro se necessário
     } finally {
-      setIsLoading(false);
+      setIsTestingConfig(false);
     }
   };
 
