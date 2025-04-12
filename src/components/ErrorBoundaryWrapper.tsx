@@ -45,16 +45,14 @@ class ErrorBoundaryWrapper extends Component<Props, State> {
     // Registrar o erro
     this.setState({ errorInfo });
     
-    // Verificar se é erro específico "X is not a function"
-    // Incluir padrão para 'tv is not a function' e outros possíveis nomes de 2 letras
-    const isNotFunctionError = error.message.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
+    // Verificar se é erro específico com a regex aprimorada
+    const isNotFunctionError = error.message.match(/([a-zA-Z$_][a-zA-Z0-9$_]{0,3}) is not a function/);
     
     if (isNotFunctionError) {
       console.log('Detectado erro específico de função não definida em componente React');
       
       try {
-        // Extrair o nome da função
-        const match = error.message.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
+        const match = error.message.match(/([a-zA-Z$_][a-zA-Z0-9$_]{0,3}) is not a function/);
         if (match && match[1]) {
           const functionName = match[1];
           console.log(`Tentando criar polyfill local para ${functionName}`);
@@ -98,7 +96,7 @@ class ErrorBoundaryWrapper extends Component<Props, State> {
     if (hasError) {
       // Verificar se é um erro de função específica do React minificado
       // Incluir padrão para 'tv is not a function'
-      const isNotFunctionError = this.state.error?.message.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
+      const isNotFunctionError = this.state.error?.message.match(/([a-zA-Z$_][a-zA-Z0-9$_]{0,3}) is not a function/);
       
       if (isNotFunctionError && typeof window !== 'undefined') {
         return (

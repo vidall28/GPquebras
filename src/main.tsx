@@ -42,9 +42,18 @@ if (typeof window !== 'undefined') {
   // Adicionar polyfill para tv que está causando erro
   if (typeof (window as any).tv !== 'function') {
     (window as any).tv = function() {
-      console.warn('Função tv chamada mas não implementada');
+      console.warn('Função tv chamada mas não implementada - Polyfill Global');
       return null;
     };
+    // Tentativa de adicionar ao React/ReactDOM também
+    if (typeof window !== 'undefined' && window.React && !(window.React as any).tv) {
+       (window.React as any).tv = (window as any).tv;
+       console.log('Polyfill tv adicionado ao React');
+    }
+     if (typeof window !== 'undefined' && window.ReactDOM && !(window.ReactDOM as any).tv) {
+       (window.ReactDOM as any).tv = (window as any).tv;
+       console.log('Polyfill tv adicionado ao ReactDOM');
+    }
   }
 
   // Garantir que React e ReactDOM estejam disponíveis globalmente
@@ -62,7 +71,8 @@ window.addEventListener('error', (event) => {
   
   try {
     const errorMsg = event.error?.toString() || '';
-    const isFunctionNotDefinedError = errorMsg.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
+    // Regex mais abrangente para nomes minificados (1-4 caracteres, começando com letra ou _/$)
+    const isFunctionNotDefinedError = errorMsg.match(/([a-zA-Z$_][a-zA-Z0-9$_]{0,3}) is not a function/);
     
     if (isFunctionNotDefinedError) {
       console.error('Erro específico detectado:', errorMsg);
@@ -74,21 +84,28 @@ window.addEventListener('error', (event) => {
       // Salvar o erro para referência
       localStorage.setItem('last_error', errorMsg);
       
-      // Extrair o nome da função que não está definida (por exemplo: Qm, Zm, Jm, tv)
-      const functionMatch = errorMsg.match(/([A-Za-z][A-Za-z]?m?) is not a function/);
+      // Extrair o nome da função
+      const functionMatch = errorMsg.match(/([a-zA-Z$_][a-zA-Z0-9$_]{0,3}) is not a function/);
       const functionName = functionMatch ? functionMatch[1] : '';
       
       if (functionName) {
-        console.log(`Tentando criar polyfill para ${functionName}`);
-        
-        // Criar dinamicamente o polyfill para a função específica
+        console.log(`Tentando criar polyfill dinâmico para ${functionName}`);
         try {
-          (window as any)[functionName] = function() { 
-            console.log(`${functionName} polyfill chamado`); 
-            return null; 
-          };
+          if (typeof (window as any)[functionName] !== 'function') {
+             (window as any)[functionName] = function() {
+               console.warn(`${functionName} polyfill chamado (dinâmico)`);
+               return null;
+             };
+             // Tentar adicionar ao React/ReactDOM também
+             if (window.React && !(window.React as any)[functionName]) {
+               (window.React as any)[functionName] = (window as any)[functionName];
+             }
+              if (window.ReactDOM && !(window.ReactDOM as any)[functionName]) {
+               (window.ReactDOM as any)[functionName] = (window as any)[functionName];
+             }
+          }
         } catch (e) {
-          console.error('Falha ao criar polyfill:', e);
+           console.error(`Falha ao criar polyfill dinâmico para ${functionName}:`, e);
         }
       }
       
@@ -126,7 +143,7 @@ try {
   }
   
   if (window.React && !window.React.tv) {
-    window.React.tv = function() { return null; };
+    window.React.tv = function() { console.warn("React.tv polyfill estático"); return null; };
   }
   
   if (window.ReactDOM && !window.ReactDOM.Qm) {
@@ -134,10 +151,10 @@ try {
   }
   
   if (window.ReactDOM && !window.ReactDOM.tv) {
-    window.ReactDOM.tv = function() { return null; };
+    window.ReactDOM.tv = function() { console.warn("ReactDOM.tv polyfill estático"); return null; };
   }
 } catch (e) {
-  console.error('Erro ao adicionar polyfills:', e);
+  console.error('Erro ao adicionar polyfills estáticos ao React/ReactDOM:', e);
 }
 
 // Inicializar a aplicação
