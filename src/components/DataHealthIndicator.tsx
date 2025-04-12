@@ -178,8 +178,8 @@ export function DataHealthIndicator() {
     }
   };
   
-  // Verificar a conexão periodicamente - COMENTADO PARA DEBUG
-  /*
+  // Verificar a conexão periodicamente - RESTAURADO
+  
   useEffect(() => {
     checkConnection();
     
@@ -189,7 +189,6 @@ export function DataHealthIndicator() {
     
     return () => clearInterval(interval);
   }, []);
-  */
   
   // Definir a cor e ícone com base no status
   const getStatusColor = () => {
