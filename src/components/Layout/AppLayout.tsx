@@ -44,9 +44,9 @@ export const AppLayout: React.FC = () => {
   
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* --- INÍCIO: COMENTAR ConnectionStatus e DataHealth --- */}
-      {/* Status de Conexão - COMENTADO */}
-      {/* <ConnectionStatus /> */}
+      {/* --- INÍCIO: RESTAURAR ConnectionStatus --- */}
+      {/* Status de Conexão */}
+      <ConnectionStatus /> 
       
       
       {/* Sidebar - RESTAURADO */}
