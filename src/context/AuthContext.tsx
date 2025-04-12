@@ -106,53 +106,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log(`Evento de autenticação: ${event}${session ? ' com sessão' : ''}`);
+      
+      // Sempre iniciar como loading quando um evento relevante acontece
+      // Exceto para SIGNED_OUT que já define isLoading=false
+      if (event !== 'SIGNED_OUT') {
+          setIsLoading(true);
+      }
 
       if (event === 'SIGNED_OUT') {
         console.log("Evento SIGNED_OUT recebido, limpando usuário.");
         setUser(null);
         setIsLoading(false);
-        // O logout() já navega, não precisa aqui
         return;
       }
 
       if (session) {
         console.log(`Usuário autenticado (evento ${event}), ID: ${session.user.id}`);
-        // Tentar buscar dados detalhados do usuário
-        console.log(`Buscando dados detalhados do usuário após evento ${event}...`);
-        // Não setar loading true aqui novamente, já está true desde o início do listener
         try {
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Timeout (10s) ao buscar dados do usuário no onAuthStateChange')), 10000)
-          );
-          
-          const userDataPromise = supabase
+          // Busca sempre os dados mais recentes do usuário na tabela 'users'
+          console.log(`Buscando dados detalhados do usuário após evento ${event}...`);
+          const { data: userData, error: userError } = await supabase
             .from('users')
             .select('*')
             .eq('id', session.user.id)
             .single();
 
-          const { data: userData, error: userError } = await Promise.race([userDataPromise, timeoutPromise]) as any;
-
           if (userError) {
             console.error(`Erro ao buscar dados do usuário (evento ${event}):`, userError);
-            // Se o erro for timeout ou específico, tentar fallback
-            if (userError instanceof Error && userError.message.includes('Timeout')) {
-               toast.error('Servidor demorou a responder. Verificando dados mínimos.');
-            } else {
-               toast.error('Erro ao carregar perfil completo.');
-            }
-            // Por agora, apenas deslogamos para evitar estado inconsistente
-            console.warn("Falha ao buscar dados do usuário, deslogando para segurança.");
-            await supabase.auth.signOut(); // Força logout
+            toast.error('Erro ao carregar dados do perfil. Saindo...');
+            await supabase.auth.signOut(); // Força logout em caso de erro
             setUser(null); 
-            setIsLoading(false);
-            // Considerar não navegar aqui, talvez mostrar mensagem na tela de login
-            // navigate('/login'); 
+            setIsLoading(false); 
             return;
           }
 
           if (userData) {
-            console.log(`Dados do usuário carregados do evento de autenticação (${event}):`, userData);
             const currentUser: User = {
               id: userData.id,
               name: userData.name,
@@ -162,41 +150,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               status: userData.status
             };
             console.log(`Atualizando usuário no estado a partir do evento (${event}):`, currentUser);
-            // Verifica se o usuário realmente mudou para evitar re-renders desnecessários
-            // Comparação simples (pode precisar ser mais robusta se objetos complexos)
-            if (JSON.stringify(user) !== JSON.stringify(currentUser)) {
-              setUser(currentUser);
-            }
+            setUser(currentUser); // Define o usuário diretamente
           } else {
-            // Não encontrou usuário na tabela 'users', pode ser um problema
-            console.warn(`Sessão válida (evento ${event}), mas usuário ${session.user.id} não encontrado na tabela 'users'.`);
+            console.warn(`Sessão válida (evento ${event}), mas usuário ${session.user.id} não encontrado na tabela 'users'. Saindo...`);
             toast.error('Erro de sincronização de dados. Por favor, faça login novamente.');
             await supabase.auth.signOut();
             setUser(null);
-            setIsLoading(false);
-            // navigate('/login');
-            return;
           }
 
         } catch (error) {
            console.error(`Erro inesperado no listener onAuthStateChange (evento ${event}):`, error);
-           toast.error('Erro inesperado ao verificar sessão.');
-           setUser(null); // Limpa usuário em caso de erro grave
+           toast.error('Erro inesperado ao verificar sessão. Saindo...');
+           await supabase.auth.signOut(); // Força logout em erro grave
+           setUser(null); 
         } finally {
-          setIsLoading(false); // Garante que loading termina APÓS tentativa de buscar dados
+          // Definir loading false SEMPRE que o processo terminar (sucesso ou falha na busca)
+          setIsLoading(false); 
         }
-      } else if (event !== 'INITIAL_SESSION') {
-        // Se não há sessão e não é a sessão inicial
-        console.log(`Evento ${event} sem sessão, garantindo que usuário é nulo.`);
+      } else {
+        // Nenhum usuário logado (ex: após SIGNED_OUT ou INITIAL_SESSION sem usuário)
+        console.log(`Evento ${event} sem sessão, usuário definido como nulo.`);
         setUser(null);
         setIsLoading(false);
-      } else if (event === 'INITIAL_SESSION') {
-         // Sessão inicial pode ou não ter usuário, se não tiver, termina o loading
-         if (!session) {
-            console.log("Sessão inicial sem usuário logado.")
-            setIsLoading(false);
-         }
-         // Se tiver sessão, o bloco 'if (session)' acima tratará e definirá isLoading = false no finally
       }
     });
 
