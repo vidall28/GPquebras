@@ -137,5 +137,39 @@ export const rpc = {
     }
   },
   
+  // Função RPC para ping (simples)
+  async ping(): Promise<boolean> {
+    try {
+      // Assumindo que a função RPC se chama 'ping' e retorna algo (ex: true)
+      const { data, error } = await supabase.rpc('ping');
+      if (error) {
+        console.error('Erro no RPC ping:', error);
+        return false;
+      }
+      // Retorna true se a chamada RPC foi bem-sucedida (mesmo que data seja null)
+      return true; 
+    } catch (error) {
+      console.error('Erro geral no RPC ping:', error);
+      return false;
+    }
+  },
+  
+  // Função RPC para verificar RLS
+  async rlsEnabled(): Promise<boolean> {
+     try {
+      // Assumindo que a função RPC se chama 'is_rls_enabled' e retorna boolean
+      const { data, error } = await supabase.rpc('is_rls_enabled'); 
+      if (error) {
+        console.error('Erro no RPC is_rls_enabled:', error);
+        return false; // Assume RLS como não habilitado ou erro
+      }
+      // Retorna o valor booleano diretamente
+      return !!data;
+    } catch (error) {
+      console.error('Erro geral no RPC is_rls_enabled:', error);
+      return false;
+    }
+  },
+  
   // Adicione outras chamadas RPC aqui conforme necessário
 }; 

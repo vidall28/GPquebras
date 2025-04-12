@@ -136,14 +136,13 @@ export const AppLayout: React.FC = () => {
           </div>
         </main>
         
-        {/* Data Health Indicator - COMENTADO */}
-        {/* 
+        {/* Data Health Indicator - RESTAURADO */}
+        
         {showDataHealth && (
           <div className="fixed bottom-4 right-4 z-50">
             <DataHealthIndicator />
           </div>
         )}
-        */}
         
        {/* --- FIM: COMENTAR ConnectionStatus e DataHealth --- */}
       </div>

@@ -178,7 +178,8 @@ export function DataHealthIndicator() {
     }
   };
   
-  // Verificar a conexão periodicamente
+  // Verificar a conexão periodicamente - COMENTADO PARA DEBUG
+  /*
   useEffect(() => {
     checkConnection();
     
@@ -188,6 +189,7 @@ export function DataHealthIndicator() {
     
     return () => clearInterval(interval);
   }, []);
+  */
   
   // Definir a cor e ícone com base no status
   const getStatusColor = () => {
@@ -238,9 +240,10 @@ export function DataHealthIndicator() {
             <div className="flex items-center gap-1">
               <span className="text-sm font-medium">Pontuação:</span>
               <Badge variant={
-                healthScore >= 90 ? "success" : 
-                healthScore >= 75 ? "default" : 
-                healthScore >= 50 ? "warning" : "destructive"
+                healthScore >= 90 ? "default" :
+                healthScore >= 75 ? "default" :
+                healthScore >= 50 ? "outline" :
+                "destructive"
               }>
                 {healthStatus.label}
               </Badge>
@@ -248,11 +251,20 @@ export function DataHealthIndicator() {
             <span className="text-sm font-medium">{healthScore}%</span>
           </div>
           
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Status Geral:</span>
+            <Badge variant={status === 'healthy' ? 'default' : status === 'warning' ? 'outline' : 'destructive'}>
+               {getStatusIcon()} <span className="ml-1">{status.charAt(0).toUpperCase() + status.slice(1)}</span>
+            </Badge>
+          </div>
+          
           <Progress value={healthScore} className="h-2" />
         </div>
         
+        {/* Conteúdo Expandido Correto */}
         {expanded && (
           <div className="mt-4 space-y-3">
+            {/* Resumo (OK) */}
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="space-y-1">
                 <div className="text-muted-foreground">Total de Ops (2h):</div>
@@ -272,109 +284,105 @@ export function DataHealthIndicator() {
               </div>
             </div>
             
+            {/* TOOLTIPS - REMOVIDOS PARA DEBUG FINAL */}
             <div className="text-xs font-medium mt-2 mb-1">Operações por tipo:</div>
-            <div className="grid grid-cols-5 gap-1">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+            {/* <TooltipProvider> */}{/* Provider Removido */}
+              <div className="grid grid-cols-5 gap-1">
+                {/* <Tooltip> */}
+                  {/* <TooltipTrigger asChild> */}
                     <Badge variant="outline" className="flex flex-col py-1 h-auto">
                       <span className="text-xs">SEL</span>
                       <span className="text-xs font-bold">{summary.select}</span>
                     </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Select: {summary.select}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                  {/* </TooltipTrigger> */}
+                  {/* <TooltipContent> */}
+                    {/* <p>Select: {summary.select}</p> */}
+                  {/* </TooltipContent> */}
+                {/* </Tooltip> */}
+                
+                {/* <Tooltip> */}
+                  {/* <TooltipTrigger asChild> */}
                     <Badge variant="outline" className="flex flex-col py-1 h-auto">
                       <span className="text-xs">INS</span>
                       <span className="text-xs font-bold">{summary.insert}</span>
                     </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Insert: {summary.insert}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                  {/* </TooltipTrigger> */}
+                  {/* <TooltipContent> */}
+                    {/* <p>Insert: {summary.insert}</p> */}
+                  {/* </TooltipContent> */}
+                {/* </Tooltip> */}
+                
+                {/* <Tooltip> */}
+                  {/* <TooltipTrigger asChild> */}
                     <Badge variant="outline" className="flex flex-col py-1 h-auto">
                       <span className="text-xs">UPD</span>
                       <span className="text-xs font-bold">{summary.update}</span>
                     </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Update: {summary.update}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                  {/* </TooltipTrigger> */}
+                  {/* <TooltipContent> */}
+                    {/* <p>Update: {summary.update}</p> */}
+                  {/* </TooltipContent> */}
+                {/* </Tooltip> */}
+                
+                {/* <Tooltip> */}
+                  {/* <TooltipTrigger asChild> */}
                     <Badge variant="outline" className="flex flex-col py-1 h-auto">
                       <span className="text-xs">DEL</span>
                       <span className="text-xs font-bold">{summary.delete}</span>
                     </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Delete: {summary.delete}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                  {/* </TooltipTrigger> */}
+                  {/* <TooltipContent> */}
+                    {/* <p>Delete: {summary.delete}</p> */}
+                  {/* </TooltipContent> */}
+                {/* </Tooltip> */}
+                
+                {/* <Tooltip> */}
+                  {/* <TooltipTrigger asChild> */}
                     <Badge variant="outline" className="flex flex-col py-1 h-auto">
                       <span className="text-xs">RPC</span>
                       <span className="text-xs font-bold">{summary.rpc}</span>
                     </Badge>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>RPC Calls: {summary.rpc}</p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
+                  {/* </TooltipTrigger> */}
+                  {/* <TooltipContent> */}
+                    {/* <p>RPC Calls: {summary.rpc}</p> */}
+                  {/* </TooltipContent> */}
+                {/* </Tooltip> */}
+              </div>
+            {/* </TooltipProvider> */}{/* Fim do Provider Removido */}
+            {/* FIM DOS TOOLTIPS REMOVIDOS */}
             
+            {/* Lista de Operações Recentes - RESTAURADA */}
             {operations.length > 0 && (
               <div className="mt-3">
-                <div className="text-xs font-medium mb-1">Últimas operações:</div>
-                <div className="max-h-32 overflow-y-auto text-xs">
-                  {operations.slice(0, 5).map(op => (
-                    <div 
-                      key={op.id} 
-                      className="flex items-center justify-between py-1 border-b border-border last:border-0"
-                    >
-                      <div className="flex items-center gap-1">
-                        {op.success ? (
-                          <CheckCircle2 className="h-3 w-3 text-green-500" />
-                        ) : (
-                          <AlertTriangle className="h-3 w-3 text-red-500" />
-                        )}
-                        <span>
-                          {op.operation.toUpperCase()} {op.table}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-3 w-3 text-muted-foreground" />
-                        <span className={op.duration > 1000 ? "text-amber-500" : ""}>
-                          {op.duration}ms
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                 <div className="text-xs font-medium mb-1">Últimas operações:</div>
+                 <div className="max-h-32 overflow-y-auto text-xs">
+                   {operations.slice(0, 5).map(op => (
+                     <div 
+                       key={op.id} 
+                       className="flex items-center justify-between py-1 border-b border-border last:border-0"
+                     >
+                       <div className="flex items-center gap-1">
+                         {op.success ? (
+                           <CheckCircle2 className="h-3 w-3 text-green-500" />
+                         ) : (
+                           <AlertTriangle className="h-3 w-3 text-red-500" />
+                         )}
+                         <span>
+                           {op.operation.toUpperCase()} {op.table}
+                         </span>
+                       </div>
+                       <div className="flex items-center gap-1">
+                         <Clock className="h-3 w-3 text-muted-foreground" />
+                         <span className={op.duration > 1000 ? "text-amber-500" : ""}>
+                           {op.duration}ms
+                         </span>
+                       </div>
+                     </div>
+                   ))}
+                 </div>
               </div>
             )}
+            {/* FIM DA LISTA */}
           </div>
         )}
       </CardContent>
