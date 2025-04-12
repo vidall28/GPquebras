@@ -166,97 +166,56 @@ const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
   return <>{children}</>;
 };
 
-// Componente de conteúdo da aplicação com rotas
+// Componente de conteúdo da aplicação com rotas (SIMPLIFICADO PARA DEBUG)
 const AppContent = () => (
   <Router>
-    <AuthProvider>
-      <DataProvider>
-        <Toaster />
-        <Sonner />
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/login" element={
-            <ErrorBoundary>
-              <Login />
-            </ErrorBoundary>
-          } />
-          <Route path="/register" element={
-            <ErrorBoundary>
-              <Register />
-            </ErrorBoundary>
-          } />
-          <Route path="/diagnostico" element={<DiagnosticsPage />} />
-          
-          {/* Redirect root to login or dashboard */}
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          
-          {/* Protected Routes com AppLayout */}
-          <Route path="/" element={
-            <ProtectedRoute>
-              <ErrorBoundary>
-                <AppLayout />
-              </ErrorBoundary>
-            </ProtectedRoute>
-          }>
-            <Route
-              index
-              element={<Navigate to="dashboard" replace />}
-            />
-            <Route
-              path="dashboard"
-              element={
+      {/* AuthProvider e DataProvider ainda necessários para o contexto */}
+      <AuthProvider>
+        <DataProvider>
+          <Toaster />
+          <Sonner />
+          <Routes>
+            {/* Rota de Login Simples */}
+            <Route path="/login" element={<div>Página de Login Simples</div>} />
+
+            {/* Rota de Dashboard Simples (sem proteção) */}
+            <Route path="/dashboard" element={<div>Página de Dashboard Simples</div>} />
+
+             {/* Rota de Diagnóstico (mantida) */}
+             <Route path="/diagnostico" element={<DiagnosticsPage />} />
+
+            {/* Redirecionamento inicial (pode ser uma causa, verificar) */}
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+            {/* Rota Catch-all para Not Found (mantida) */}
+            <Route path="*" element={<div>404 - Página Não Encontrada</div>} />
+
+            {/* ---- ROTAS PROTEGIDAS E LAYOUT REMOVIDOS TEMPORARIAMENTE ----
+            <Route path="/" element={
+              <ProtectedRoute>
                 <ErrorBoundary>
-                  <Dashboard />
+                  <AppLayout />
                 </ErrorBoundary>
-              }
-            />
-            <Route
-              path="record"
-              element={
-                <ErrorBoundary>
-                  <RecordExchange />
-                </ErrorBoundary>
-              }
-            />
-            <Route
-              path="history"
-              element={<History />}
-            />
-            <Route
-              path="approvals"
-              element={<Approvals />}
-            />
-            <Route
-              path="products"
-              element={
-                <AdminRoute>
-                  <Products />
-                </AdminRoute>
-              }
-            />
-            <Route
-              path="users"
-              element={
-                <AdminRoute>
-                  <Users />
-                </AdminRoute>
-              }
-            />
-            <Route
-              path="reports"
-              element={<Reports />}
-            />
-            <Route
-              path="notifications"
-              element={<NotificationsPage />}
-            />
-          </Route>
-          
-          {/* Rota Catch-all para Not Found */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </DataProvider>
-    </AuthProvider>
+              </ProtectedRoute>
+            }>
+              <Route
+                index
+                element={<Navigate to="dashboard" replace />}
+              />
+              <Route
+                path="dashboard"
+                element={
+                    <ErrorBoundary>
+                      <Dashboard />
+                    </ErrorBoundary>
+                }
+              />
+             // ... outras rotas protegidas ...
+            </Route>
+            ---- FIM DAS ROTAS REMOVIDAS ---- */}
+          </Routes>
+        </DataProvider>
+      </AuthProvider>
   </Router>
 );
 
