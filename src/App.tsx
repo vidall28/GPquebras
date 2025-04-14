@@ -202,56 +202,64 @@ const AppContent = () => (
                 </ProtectedRoute>
               }
             >
-              {/* Rotas aninhadas (filhas) - MANTIDAS SIMPLES POR ENQUANTO */}
+              {/* Rotas aninhadas (filhas do AppLayout) - RESTAURADAS */}
               <Route
                 index // Rota padrão -> dashboard
                 element={<Navigate to="dashboard" replace />}
               />
               <Route
                 path="dashboard"
-                element={<div>Dashboard Simples (Dentro do Layout)</div>}
+                element={
+                    <ErrorBoundary>
+                      <Dashboard />
+                    </ErrorBoundary>
+                }
               />
               <Route
                 path="record"
-                 element={<div>Registro Simples (Dentro do Layout)</div>}
+                 element={
+                    <ErrorBoundary>
+                      <RecordExchange />
+                    </ErrorBoundary>
+                }
               />
               <Route
                 path="history"
-                element={<div>Histórico Simples (Dentro do Layout)</div>}
+                element={<History />}
               />
               <Route
                 path="approvals"
-                element={<div>Aprovações Simples (Dentro do Layout)</div>}
+                element={<Approvals />}
               />
-              {/* Rota Admin Simples */}
+              {/* Rota Admin */}
               <Route
                 path="products"
                 element={
                   <AdminRoute>
-                    <div>Produtos Simples (Admin - Dentro do Layout)</div>
+                    <Products />
                   </AdminRoute>
                 }
               />
-               {/* Rota Admin Simples */}
+               {/* Rota Admin */}
               <Route
                 path="users"
                 element={
                   <AdminRoute>
-                    <div>Usuários Simples (Admin - Dentro do Layout)</div>
+                    <Users />
                   </AdminRoute>
                 }
               />
-              {/* Rota Protegida Simples */}
+              {/* Rota Protegida */}
               <Route
                 path="reports"
-                element={<div>Relatórios Simples (Dentro do Layout)</div>}
+                element={<Reports />}
               />
-               {/* Rota Protegida Simples */}
+               {/* Rota Protegida */}
               <Route
                 path="notifications"
-                 element={<div>Notificações Simples (Dentro do Layout)</div>}
+                 element={<NotificationsPage />}
               />
-              {/* Adicione outras rotas simples aqui se necessário */}
+              {/* Adicione outras rotas aqui se necessário */}
             </Route>
 
             {/* Rota Catch-all para Not Found (mantida) */}

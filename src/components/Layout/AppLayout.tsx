@@ -8,21 +8,12 @@ import { cn } from '@/lib/utils';
 import { NotificationBell } from '@/components/ui/NotificationBell';
 import { ConnectionStatus } from '@/components/ConnectionStatus';
 import { NotificationDropdown } from '@/components/NotificationDropdown';
-import { DataHealthIndicator } from '@/components/DataHealthIndicator';
 
 export const AppLayout: React.FC = () => {
   const { isAuthenticated, user, logout, isAdmin } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [showDataHealth, setShowDataHealth] = useState(false);
   const location = useLocation();
   const isMobile = useIsMobile();
-  
-  // --- INÍCIO: DESCOMENTAR useEffects PARA DEBUG ---
-  
-  // Mostrar o indicador de saúde de dados apenas para administradores
-  useEffect(() => {
-    setShowDataHealth(isAdmin);
-  }, [isAdmin]);
   
   // Close sidebar on mobile by default
   useEffect(() => {
@@ -39,8 +30,6 @@ export const AppLayout: React.FC = () => {
       setIsSidebarOpen(false);
     }
   }, [location.pathname, isMobile]);
-  
-  // --- FIM: DESCOMENTAR useEffects PARA DEBUG ---
   
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
@@ -109,7 +98,7 @@ export const AppLayout: React.FC = () => {
           
           {/* User Info */}
           <div className="flex items-center gap-4">
-             {/* <NotificationDropdown /> - COMENTADO PARA DEBUG */}
+             <NotificationDropdown />
             <div className="flex flex-col justify-center">
               <span className="text-sm">{user?.name || 'Usuário'}</span>
               <span className="text-xs text-muted-foreground">Matrícula: {user?.registration || 'N/A'}</span>
@@ -135,14 +124,6 @@ export const AppLayout: React.FC = () => {
             <Outlet />
           </div>
         </main>
-        
-        {/* Data Health Indicator - RESTAURADO */}
-        
-        {showDataHealth && (
-          <div className="fixed bottom-4 right-4 z-50">
-            <DataHealthIndicator />
-          </div>
-        )}
         
        {/* --- FIM: COMENTAR ConnectionStatus e DataHealth --- */}
       </div>
