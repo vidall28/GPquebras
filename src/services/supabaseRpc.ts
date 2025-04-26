@@ -171,5 +171,58 @@ export const rpc = {
     }
   },
   
+  // Função para atualizar o status de uma troca/quebra
+  async updateExchangeStatus(id: string, status: 'pending' | 'approved' | 'rejected', notes?: string): Promise<boolean> {
+    try {
+      console.log(`Atualizando status da troca/quebra ${id} para ${status}`);
+      // Chamar a RPC no banco de dados
+      const { data, error } = await supabase.rpc('update_exchange_status', {
+        p_exchange_id: id,
+        p_status: status,
+        p_notes: notes || null
+      });
+      
+      if (error) {
+        console.error('Erro ao atualizar status via RPC:', error);
+        return false;
+      }
+      
+      console.log(`Status da troca/quebra ${id} atualizado com sucesso para ${status}`);
+      return true;
+    } catch (error) {
+      console.error('Erro geral ao atualizar status da troca/quebra:', error);
+      return false;
+    }
+  },
+  
+  // Função de atualização de emergência para admins
+  async emergencyUpdateExchange(id: string, status: 'pending' | 'approved' | 'rejected', notes?: string, adminId?: string): Promise<boolean> {
+    try {
+      console.log(`Atualização de emergência da troca/quebra ${id} para ${status} pelo admin ${adminId}`);
+      
+      // Atualizar diretamente a tabela em vez de usar RPC
+      const { error } = await supabase
+        .from('exchanges')
+        .update({
+          status: status,
+          notes: notes || null,
+          updated_at: new Date().toISOString(),
+          updated_by: adminId
+        })
+        .eq('id', id);
+      
+      if (error) {
+        console.error('Erro na atualização de emergência:', error);
+        return false;
+      }
+      
+      console.log(`Atualização de emergência da troca/quebra ${id} realizada com sucesso`);
+      return true;
+    } catch (error) {
+      console.error('Erro geral na atualização de emergência:', error);
+      return false;
+    }
+  },
+  
   // Adicione outras chamadas RPC aqui conforme necessário
 }; 

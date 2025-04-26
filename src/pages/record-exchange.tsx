@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
@@ -206,6 +205,7 @@ const RecordExchange: React.FC = () => {
                 handleFileChange={handleFileChange}
                 removePhoto={removePhoto}
                 addItem={addItem}
+                type={type}
               />
             </CardContent>
           </Card>
