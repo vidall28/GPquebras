@@ -288,6 +288,20 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
         }
         if (session) {
            console.log('[AppInitializer] Initial session found.');
+           // Inicializar sistemas dependentes aqui ao invés de no AuthContext
+           try {
+             // Importação dinâmica para evitar dependências circulares
+             const notificationsModule = await import('@/lib/notifications');
+             const offlineManagerModule = await import('@/lib/offlineManager');
+             
+             if (session.user.id) {
+               console.log('[AppInitializer] Initializing dependent systems with user ID:', session.user.id);
+               notificationsModule.useNotifications.init(session.user.id);
+               offlineManagerModule.ensureOfflineManagerInitialized(session.user.id);
+             }
+           } catch (e) {
+             console.error('[AppInitializer] Error initializing dependent systems:', e);
+           }
            // O AuthProvider cuidará de buscar o perfil via onAuthStateChange
         } else {
            console.log('[AppInitializer] No initial session found.');

@@ -79,26 +79,40 @@ export const NotificationManager = {
       return this;
     }
     
-    this.userId = userId || null;
-    this.initialized = true;
-    
-    // Carregar notificações do localStorage
-    this.loadFromLocalStorage();
-    
-    // Se houver um usuário, carregar notificações do banco de dados
-    if (userId) {
-      this.loadNotifications();
+    // Proteção contra inicializações simultâneas que poderiam causar recursão
+    const initializationInProgress = localStorage.getItem('notifications_initializing');
+    if (initializationInProgress) {
+      console.log('Inicialização já em andamento. Evitando recursão.');
+      return this;
     }
     
-    // Configurar assinatura em tempo real se houver um usuário
-    if (userId) {
-      this.setupRealtimeSubscription(userId);
+    try {
+      localStorage.setItem('notifications_initializing', 'true');
+      
+      this.userId = userId || null;
+      this.initialized = true;
+      
+      // Carregar notificações do localStorage
+      this.loadFromLocalStorage();
+      
+      // Se houver um usuário, carregar notificações do banco de dados
+      if (userId) {
+        this.loadNotifications();
+      }
+      
+      // Configurar assinatura em tempo real se houver um usuário
+      if (userId) {
+        this.setupRealtimeSubscription(userId);
+      }
+      
+      // Verificar e configurar notificações push
+      this.checkPushNotificationSupport();
+      
+      return this;
+    } finally {
+      // Remover sinalizador de inicialização
+      localStorage.removeItem('notifications_initializing');
     }
-    
-    // Verificar e configurar notificações push
-    this.checkPushNotificationSupport();
-    
-    return this;
   },
   
   /**

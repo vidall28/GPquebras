@@ -29,15 +29,27 @@ const NotificationIcons: Record<string, React.ReactNode> = {
 export function NotificationDropdown() {
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
-  const { 
-    notifications, 
-    unreadCount, 
-    markAsRead, 
-    deleteNotification, 
-    clearAllNotifications,
-    isLoading
-  } = useNotifications();
   const [open, setOpen] = useState(false);
+  
+  // Verificação segura para o sistema de notificações
+  // Se houver erro ao acessar useNotifications, retornaremos valores padrão
+  const notificationsSystem = useNotifications || { 
+    notifications: [], 
+    unreadCount: 0,
+    markAsRead: async () => {},
+    deleteNotification: async () => {},
+    clearAllNotifications: async () => {},
+    isLoading: false
+  };
+  
+  const {
+    notifications = [],
+    unreadCount = 0,
+    markAsRead,
+    deleteNotification,
+    clearAllNotifications,
+    isLoading = false
+  } = notificationsSystem;
   
   // Efeito para atualizar a contagem de notificações no título
   useEffect(() => {
@@ -51,6 +63,8 @@ export function NotificationDropdown() {
   // Função para marcar notificação como lida
   const handleMarkAsRead = async (id: string) => {
     try {
+      if (!markAsRead) return; // Proteção adicional
+
       if (isOnline) {
         await markAsRead(id);
         toast({
@@ -80,6 +94,8 @@ export function NotificationDropdown() {
   // Função para excluir notificação
   const handleDeleteNotification = async (id: string) => {
     try {
+      if (!deleteNotification) return; // Proteção adicional
+
       if (isOnline) {
         await deleteNotification(id);
         toast({

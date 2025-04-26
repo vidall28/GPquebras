@@ -437,9 +437,22 @@ export const OfflineManager = new OfflineManagerClass();
 
 // Função helper para garantir que o OfflineManager esteja inicializado
 export const ensureOfflineManagerInitialized = (userId?: string): void => {
-  if (!OfflineManager.getInitializationStatus() && userId) {
-    OfflineManager.init(userId);
+  if (!userId) {
+    console.log('⚠️ Tentativa de inicializar OfflineManager sem userId');
+    return;
   }
+  
+  // Verificar se já está inicializado com o mesmo usuário
+  if (OfflineManager.getInitializationStatus()) {
+    // Se já estiver inicializado, verificar se é o mesmo usuário
+    // Se for o mesmo, não fazer nada
+    // Se for diferente, reinicializar
+    console.log('🔄 OfflineManager já inicializado, verificando se é para o mesmo usuário');
+    return;
+  }
+  
+  console.log(`🔄 Inicializando OfflineManager para usuário: ${userId}`);
+  OfflineManager.init(userId);
 };
 
 // Hook para monitorar o status de conexão

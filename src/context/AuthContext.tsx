@@ -147,12 +147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (user) {
       logStateChange('useEffect[user]: User authenticated, initializing dependent systems.', `User ID: ${user.id}`);
-      // try {
-      //   useNotifications.init(user.id);
-      //   ensureOfflineManagerInitialized(user.id);
-      // } catch (e) {
-      //   logStateChange('useEffect[user]: Error initializing dependent systems', e);
-      // }
+      // REMOVIDO: A inicialização de sistemas dependentes foi movida para o AppInitializer
+      // para evitar dependências circulares e recursão infinita
     } else {
       logStateChange('useEffect[user]: User not authenticated, dependent systems inactive.');
       // Lógica de limpeza para notificações/offline se necessário

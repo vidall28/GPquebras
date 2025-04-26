@@ -17,6 +17,7 @@ import { useNavigate } from 'react-router-dom';
 import { OfflineManager, useOnlineStatus } from '@/lib/offlineManager';
 import { Loader2, RotateCw } from 'lucide-react';
 import { AlertCircle } from 'lucide-react';
+import { clearRecursionDiagnostics } from '@/lib/recursionGuard';
 
 // Função para reinicializar o cliente Supabase em caso de problemas
 const resetSupabaseClient = async () => {
@@ -425,6 +426,9 @@ const DiagnosticsPage: React.FC = () => {
   const [adminStatus, setAdminStatus] = useState<boolean | null>(null);
   const [isResetting, setIsResetting] = useState(false);
   const [supabaseConfig, setSupabaseConfig] = useState(checkSupabaseConfig());
+  const [localStorageContent, setLocalStorageContent] = useState<Record<string, any>>({});
+  const [hasAttemptedFix, setHasAttemptedFix] = useState(false);
+  const [fixResults, setFixResults] = useState<string[]>([]);
 
   // Função para executar teste de conexão
   const runConnectionTest = async () => {
@@ -534,6 +538,98 @@ const DiagnosticsPage: React.FC = () => {
     }
   }, [isAuthenticated, isAdmin]);
 
+  useEffect(() => {
+    loadLocalStorageContent();
+  }, []);
+  
+  const loadLocalStorageContent = () => {
+    const content: Record<string, any> = {};
+    
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key) {
+          try {
+            const value = localStorage.getItem(key);
+            if (value) {
+              try {
+                content[key] = JSON.parse(value);
+              } catch {
+                content[key] = value;
+              }
+            }
+          } catch (e) {
+            content[key] = "Error reading value";
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Error loading localStorage:", e);
+    }
+    
+    setLocalStorageContent(content);
+  };
+  
+  const clearAllStorage = () => {
+    if (confirm('Isso limpará todos os dados do navegador. Você precisará fazer login novamente. Continuar?')) {
+      localStorage.clear();
+      sessionStorage.clear();
+      loadLocalStorageContent();
+      setFixResults(['Todos os dados do navegador foram limpos. Você será redirecionado para a página de login.']);
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 3000);
+    }
+  };
+  
+  const detectRecursionIssues = () => {
+    const issues: string[] = [];
+    
+    // Verificar erros de recursão registrados
+    const recursionErrors = localStorageContent['recursion_errors'];
+    if (recursionErrors && Array.isArray(recursionErrors) && recursionErrors.length > 0) {
+      issues.push(`Detectados ${recursionErrors.length} erros de recursão.`);
+    }
+    
+    // Verificar item de inicialização de notificações
+    if (localStorageContent['notifications_initializing'] === 'true') {
+      issues.push('Sistema de notificações travado em estado de inicialização.');
+    }
+    
+    // Verificar estado de recuperação
+    if (localStorageContent['recovery_mode'] === 'true') {
+      issues.push('Aplicação está em modo de recuperação.');
+    }
+    
+    return issues;
+  };
+  
+  const attemptAutoFix = () => {
+    const results: string[] = [];
+    
+    // Limpar flags de inicialização
+    if (localStorage.getItem('notifications_initializing') === 'true') {
+      localStorage.removeItem('notifications_initializing');
+      results.push('Removido flag de inicialização de notificações.');
+    }
+    
+    // Limpar sinalizadores de recursão
+    clearRecursionDiagnostics();
+    results.push('Dados de diagnóstico de recursão limpos.');
+    
+    // Desativar modo de recuperação
+    if (localStorage.getItem('recovery_mode') === 'true') {
+      localStorage.removeItem('recovery_mode');
+      results.push('Modo de recuperação desativado.');
+    }
+    
+    setHasAttemptedFix(true);
+    setFixResults(results);
+    loadLocalStorageContent();
+  };
+  
+  const issues = detectRecursionIssues();
+
   // Qualquer pessoa pode acessar esta página para diagnóstico
   return (
     <div className="container space-y-8">
@@ -565,6 +661,92 @@ const DiagnosticsPage: React.FC = () => {
           <LoginTroubleshooting />
         </TabsContent>
       </Tabs>
+      
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Problemas Detectados</CardTitle>
+            <CardDescription>Lista de problemas encontrados no sistema</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {issues.length > 0 ? (
+              <div className="space-y-2">
+                {issues.map((issue, index) => (
+                  <div key={index} className="p-3 bg-red-50 text-red-700 rounded-md">
+                    {issue}
+                  </div>
+                ))}
+                
+                <div className="mt-4">
+                  <Button 
+                    onClick={attemptAutoFix} 
+                    variant="default"
+                    disabled={hasAttemptedFix && fixResults.length === 0}
+                  >
+                    Corrigir Automaticamente
+                  </Button>
+                </div>
+                
+                {hasAttemptedFix && (
+                  <div className="mt-4 space-y-2">
+                    <h3 className="font-medium">Resultados da correção:</h3>
+                    {fixResults.map((result, index) => (
+                      <div key={index} className="p-2 bg-green-50 text-green-700 rounded-md">
+                        {result}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-3 bg-green-50 text-green-700 rounded-md">
+                Nenhum problema detectado no momento.
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardHeader>
+            <CardTitle>Ações de Recuperação</CardTitle>
+            <CardDescription>Ações para recuperar o sistema em caso de problemas</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Button onClick={loadLocalStorageContent} variant="outline" className="w-full">
+              Atualizar Dados
+            </Button>
+            
+            <Button 
+              onClick={() => {
+                localStorage.removeItem('sb-auth-token');
+                localStorage.removeItem('sb-refresh-token');
+                loadLocalStorageContent();
+                setFixResults(['Sessão de autenticação encerrada.']);
+              }} 
+              variant="outline" 
+              className="w-full"
+            >
+              Limpar Dados de Autenticação
+            </Button>
+            
+            <Button onClick={clearAllStorage} variant="destructive" className="w-full">
+              Limpar Todos os Dados
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+      
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Dados do LocalStorage</CardTitle>
+          <CardDescription>Inspeção do armazenamento local</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <pre className="bg-slate-50 p-4 rounded overflow-auto max-h-[400px] text-xs">
+            {JSON.stringify(localStorageContent, null, 2)}
+          </pre>
+        </CardContent>
+      </Card>
     </div>
   );
 };
