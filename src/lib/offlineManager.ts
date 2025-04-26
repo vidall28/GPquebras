@@ -88,19 +88,11 @@ class OfflineManagerClass {
     this.onlineStatus = navigator.onLine;
     
     if (wasOffline && this.onlineStatus) {
-      toast({
-        title: "Conexão restabelecida",
-        description: "Sincronizando dados...",
-        duration: 3000,
-      });
-      
+      // Apenas sincronizar sem mostrar notificação
       await this.synchronize();
     } else if (!this.onlineStatus) {
-      toast({
-        title: "Modo offline ativado",
-        description: "Suas alterações serão salvas e sincronizadas quando a conexão for restabelecida.",
-        duration: 5000,
-      });
+      // Manter apenas um log no console sem exibir toast para o usuário
+      console.log("Modo offline ativado. Alterações serão sincronizadas quando a conexão for restabelecida.");
     }
   }
 
@@ -171,11 +163,12 @@ class OfflineManagerClass {
       localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(this.queue));
     } catch (error) {
       console.error('Erro ao salvar fila offline:', error);
-      toast({
-        title: "Erro ao salvar operações offline",
-        description: "Pode não ser possível recuperar operações pendentes se a página for fechada.",
-        variant: "destructive",
-      });
+      // Remover toast de notificação
+      // toast({
+      //   title: "Erro ao salvar operações offline",
+      //   description: "Pode não ser possível recuperar operações pendentes se a página for fechada.",
+      //   variant: "destructive",
+      // });
     }
   }
 
@@ -290,11 +283,8 @@ class OfflineManagerClass {
           message += `, ${failedCount} falha(s)`;
         }
         
-        toast({
-          title: "Sincronização concluída",
-          description: message,
-          duration: 3000,
-        });
+        // Remover o toast de notificação, apenas logar no console
+        console.log(`Sincronização concluída: ${message}`);
       }
       
       return { success: successCount, failed: failedCount };

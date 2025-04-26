@@ -226,11 +226,35 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           
           return usersMap;
-        }, 300); // Cache válido por 5 minutos
+        }, 30); // Reduzir tempo de cache para 30 segundos (era 300) para garantir dados mais atualizados
         
         // Adicionar informações de usuários às trocas
         const exchangesWithUserInfo = result.map(exchange => {
-          const userInfo = usersResult[exchange.userId] || { name: 'Usuário desconhecido', registration: '00000000' };
+          // Tentar obter informações do usuário novamente se não encontrado no cache
+          if (!usersResult[exchange.userId]) {
+            console.log(`Usuário não encontrado no cache para ID: ${exchange.userId}, tentando buscar individualmente`);
+            // Buscar dados individualmente se não encontrado no cache
+            supabase
+              .from('users')
+              .select('id, name, registration')
+              .eq('id', exchange.userId)
+              .single()
+              .then(({ data }) => {
+                if (data) {
+                  // Armazenar no local para futuras referências
+                  usersResult[exchange.userId] = {
+                    name: data.name,
+                    registration: data.registration
+                  };
+                }
+              })
+              .catch(err => console.error(`Erro ao buscar usuário individual: ${err}`));
+          }
+          
+          const userInfo = usersResult[exchange.userId] || { 
+            name: `Usuário (${exchange.userId?.slice(0, 8)})`, 
+            registration: exchange.userRegistration || '00000000' 
+          };
           
           return {
             ...exchange,

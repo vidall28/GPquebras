@@ -58,11 +58,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ onClose }) => {
       icon: <History size={20} />
     },
     {
-      title: 'Notificações',
-      path: '/notifications',
-      icon: <Bell size={20} />
-    },
-    {
       title: 'Administração',
       path: '#admin',
       icon: <ClipboardCheck size={20} />,
