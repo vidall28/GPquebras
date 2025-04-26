@@ -198,7 +198,7 @@ const History: React.FC = () => {
     
     // Generate zip
     const content = await zip.generateAsync({ type: 'blob' });
-    saveAs(content, `LogiSwap_${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.zip`);
+    saveAs(content, `GP_${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.zip`);
   };
   
   // Export to Excel function for a single exchange
@@ -323,7 +323,7 @@ const History: React.FC = () => {
       
       // Converter para blob e baixar
       const blob = new Blob([wbout], { type: 'application/octet-stream' });
-      saveAs(blob, `historico_registros_${new Date().toISOString().split('T')[0]}.xlsx`);
+      saveAs(blob, `GP_Histórico_${new Date().toISOString().split('T')[0]}.xlsx`);
       
       toast.success('Histórico exportado com sucesso!');
     } catch (error) {
@@ -362,7 +362,7 @@ const History: React.FC = () => {
     
     // Create and download CSV file
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    saveAs(blob, `LogiSwap_Histórico_${new Date().toISOString().split('T')[0]}.csv`);
+    saveAs(blob, `GP_Histórico_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
   return (

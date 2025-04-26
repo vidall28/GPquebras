@@ -163,4 +163,4 @@ Para melhorar ainda mais o sistema de registro, sugerimos:
 ---
 
 Caso ainda enfrente problemas, entre em contato com o suporte:
-**Email:** suporte@logiswap.com.br 
+**Email:** suporte@gp.com.br 

@@ -290,7 +290,7 @@ Para evitar problemas semelhantes no futuro:
 ### Contato para Suporte
 
 Em caso de dificuldades ao executar estes procedimentos, entre em contato com:
-- **Email**: suporte@logiswap.com.br
+- **Email**: suporte@gp.com.br
 - **Telefone**: (11) 1234-5678
 
 ---

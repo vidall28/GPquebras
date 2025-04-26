@@ -1,4 +1,3 @@
-
 import type { Config } from "tailwindcss";
 
 export default {
@@ -63,8 +62,8 @@ export default {
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
 				},
-				logiswap: {
-					blue: '#0088ff',
+				GP: {
+					red: '#FF0000',
 					dark: '#1A1F2C',
 					light: '#F6F9FC',
 					gray: '#8E9196',

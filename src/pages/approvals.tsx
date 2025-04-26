@@ -279,7 +279,7 @@ const Approvals: React.FC = () => {
     
     // Generate zip
     const content = await zip.generateAsync({ type: 'blob' });
-    saveAs(content, `LogiSwap_${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.zip`);
+    saveAs(content, `GP_${exchange.label.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.zip`);
   };
 
   // Export to Excel function

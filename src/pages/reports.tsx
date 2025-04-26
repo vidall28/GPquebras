@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
@@ -129,7 +128,7 @@ const Reports: React.FC = () => {
     
     // Create and download CSV file
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    saveAs(blob, `LogiSwap_Relatório_${new Date().toISOString().split('T')[0]}.csv`);
+    saveAs(blob, `GP_Relatório_${new Date().toISOString().split('T')[0]}.csv`);
   };
   
   // Color arrays for charts

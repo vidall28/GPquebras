@@ -79,7 +79,7 @@ const Register: React.FC = () => {
       <div className="w-full max-w-md space-y-8 animate-scale-in">
         {/* Logo and Title */}
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-primary">LogiSwap</h1>
+          <h1 className="text-3xl font-bold text-primary">GP</h1>
           <p className="mt-2 text-muted-foreground">Sistema de Gestão de Trocas e Quebras</p>
         </div>
         
