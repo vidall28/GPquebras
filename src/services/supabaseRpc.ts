@@ -175,15 +175,19 @@ export const rpc = {
   async updateExchangeStatus(id: string, status: 'pending' | 'approved' | 'rejected', notes?: string): Promise<boolean> {
     try {
       console.log(`Atualizando status da troca/quebra ${id} para ${status}`);
-      // Chamar a RPC no banco de dados
-      const { data, error } = await supabase.rpc('update_exchange_status', {
-        p_exchange_id: id,
-        p_status: status,
-        p_notes: notes || null
-      });
+      
+      // Em vez de chamar a RPC que retorna 404, vamos atualizar diretamente a tabela
+      const { error } = await supabase
+        .from('exchanges')
+        .update({
+          status: status,
+          notes: notes || null,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', id);
       
       if (error) {
-        console.error('Erro ao atualizar status via RPC:', error);
+        console.error('Erro ao atualizar status diretamente:', error);
         return false;
       }
       
