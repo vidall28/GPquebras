@@ -123,20 +123,14 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
   const auth = useAuth();
   const location = useLocation();
 
-  // Espera AuthProvider terminar sua própria carga interna SE AINDA estiver carregando
-  // A carga inicial GERAL da sessão já foi feita pelo AppInitializer
-  if (auth.isLoading) {
-    console.log('[ProtectedRoute] Auth context is loading...');
-    return <LoadingScreen message="Verificando permissões..." />;
-  }
-
-  if (!auth.isAuthenticated) {
-    console.log('[ProtectedRoute] Not authenticated, redirecting to login.');
+  // Verificar se o usuário está autenticado
+  if (!auth.isAuthenticated && !auth.isLoading) {
+    console.log('[ProtectedRoute] Não autenticado, redirecionando para login.');
     // Preserva a rota de origem para redirecionar de volta após o login
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  console.log('[ProtectedRoute] Authenticated, rendering children.');
+  // Renderizar o conteúdo mesmo durante o carregamento, sem mostrar a tela de "verificando permissões"
   return <>{children}</>;
 };
 
