@@ -135,28 +135,24 @@ const ProtectedRoute = ({ children }: ProtectedRouteProps) => {
 };
 
 // Componente para rotas administrativas
-const AdminRoute: React.FC<AdminRouteProps> = ({ children }) => {
-  const { isAuthenticated, isAdmin, isLoading } = useAuth();
+const AdminRoute = ({ children }: AdminRouteProps) => {
+  const auth = useAuth();
   const location = useLocation();
-
-  // Espera AuthProvider terminar sua própria carga interna
-  if (isLoading) {
-    console.log('[AdminRoute] Auth context is loading...');
-    return <LoadingScreen message="Verificando permissões administrativas..." />;
-  }
-
-  if (!isAuthenticated) {
-    console.log('[AdminRoute] Not authenticated, redirecting to login.');
+  
+  // Verificar se o usuário está autenticado e é admin
+  if (!auth.isAuthenticated && !auth.isLoading) {
+    console.log('[AdminRoute] Não autenticado, redirecionando para login.');
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
-
-  if (!isAdmin) {
-    console.log('[AdminRoute] Authenticated but not admin, redirecting to dashboard.');
-    toast.error('Acesso restrito a administradores');
+  
+  // Se autenticado mas não é admin, redireciona para dashboard
+  if (auth.isAuthenticated && !auth.isAdmin && !auth.isLoading) {
+    console.log('[AdminRoute] Sem permissão de administrador, redirecionando.');
+    toast.error('Você não tem permissão para acessar esta área');
     return <Navigate to="/dashboard" replace />;
   }
-
-  console.log('[AdminRoute] Authenticated and admin, rendering children.');
+  
+  // Renderizar o conteúdo mesmo durante o carregamento
   return <>{children}</>;
 };
 
@@ -319,10 +315,7 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
     };
   }, []);
 
-  if (isInitializing) {
-    return <LoadingScreen message="Inicializando aplicação..." />;
-  }
-
+  // Remover a tela de carregamento e renderizar o conteúdo diretamente
   return <>{children}</>;
 };
 
