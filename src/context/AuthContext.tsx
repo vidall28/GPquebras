@@ -78,6 +78,47 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logStateChange('useEffect[]: Setting up onAuthStateChange listener...');
     setIsLoading(true); // Começa como loading até o primeiro evento ser processado
 
+    // Função para verificar a sessão atual e atualizar o estado
+    const checkSessionStatus = async () => {
+      if (!isMounted) return;
+      
+      logStateChange('checkSessionStatus: Verificando status da sessão atual');
+      setIsLoading(true);
+      
+      try {
+        const { data: { session: currentSession }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          logStateChange('checkSessionStatus: Erro ao verificar sessão', error);
+          setIsLoading(false);
+          return;
+        }
+        
+        if (!currentSession) {
+          logStateChange('checkSessionStatus: Nenhuma sessão encontrada');
+          setUser(null);
+          setSession(null);
+          setIsLoading(false);
+          return;
+        }
+        
+        setSession(currentSession);
+        const userProfile = await fetchUserProfile(currentSession.user.id);
+        
+        if (userProfile) {
+          setUser(userProfile);
+        } else {
+          setUser(null);
+        }
+      } catch (e) {
+        logStateChange('checkSessionStatus: Erro inesperado', e);
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
     logStateChange('setupListener: Setting up onAuthStateChange...');
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, currentSession) => {
@@ -134,11 +175,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // Função de limpeza
+    // Adicionar evento para quando o usuário retorna à página
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        logStateChange('handleVisibilityChange: Usuário retornou à página, verificando sessão...');
+        checkSessionStatus();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Verificar sessão inicial
+    checkSessionStatus();
+
+    // Limpar ao desmontar
     return () => {
-      logStateChange('useEffect[]: Unmounting. Cleaning up subscription.');
       isMounted = false;
-      subscription?.unsubscribe();
+      logStateChange('useEffect[]: Cleaning up listeners...');
+      subscription.unsubscribe();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
 
   }, [fetchUserProfile, navigate]); // Dependências estáveis

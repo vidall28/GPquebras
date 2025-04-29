@@ -1155,6 +1155,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addExchange = async (exchange: Omit<Exchange, 'id' | 'createdAt'>) => {
     try {
       setIsLoading(true);
+      console.log('[DataContext] Iniciando adição de troca/quebra:', { 
+        label: exchange.label, 
+        type: exchange.type, 
+        itensCount: exchange.items.length 
+      });
       
       // 1. Inserir a troca principal
       const { data: exchangeData, error: exchangeError } = await supabase
@@ -1170,56 +1175,109 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         .single();
         
       if (exchangeError) {
+        console.error('[DataContext] Erro ao criar registro de troca:', exchangeError);
         throw exchangeError;
       }
       
       if (!exchangeData) {
+        console.error('[DataContext] Nenhum dado retornado ao criar troca');
         throw new Error('Erro ao criar registro de troca');
       }
       
+      console.log(`[DataContext] Troca criada com sucesso, ID: ${exchangeData.id}`);
+      
       // 2. Inserir os itens da troca
-      for (const item of exchange.items) {
-        // Inserir o item
-        const { data: itemData, error: itemError } = await supabase
-          .from('exchange_items')
-          .insert([{
-            exchange_id: exchangeData.id,
-            product_id: item.productId,
+      const itemsWithErrors: string[] = [];
+      for (let i = 0; i < exchange.items.length; i++) {
+        const item = exchange.items[i];
+        try {
+          console.log(`[DataContext] Processando item ${i+1}/${exchange.items.length}:`, {
+            productId: item.productId,
             quantity: item.quantity,
-            reason: item.reason
-          }])
-          .select()
-          .single();
+            photosCount: item.photos.length
+          });
           
-        if (itemError) {
-          throw itemError;
-        }
-        
-        if (!itemData) {
-          throw new Error('Erro ao adicionar item de troca');
-        }
-        
-        // Inserir as fotos do item
-        for (const photoUrl of item.photos) {
-          const { error: photoError } = await supabase
-            .from('exchange_photos')
+          // Inserir o item
+          const { data: itemData, error: itemError } = await supabase
+            .from('exchange_items')
             .insert([{
-              exchange_item_id: itemData.id,
-              photo_url: photoUrl
-            }]);
+              exchange_id: exchangeData.id,
+              product_id: item.productId,
+              quantity: item.quantity,
+              reason: item.reason
+            }])
+            .select()
+            .single();
             
-          if (photoError) {
-            throw photoError;
+          if (itemError) {
+            console.error(`[DataContext] Erro ao inserir item ${i+1}:`, itemError);
+            itemsWithErrors.push(`Item ${i+1}`);
+            continue; // Continuar para o próximo item mesmo com erro
           }
+          
+          if (!itemData) {
+            console.error(`[DataContext] Nenhum dado retornado ao criar item ${i+1}`);
+            itemsWithErrors.push(`Item ${i+1}`);
+            continue;
+          }
+          
+          console.log(`[DataContext] Item ${i+1} criado com sucesso, ID: ${itemData.id}`);
+          
+          // Inserir as fotos do item com tratamento de erro por foto
+          const photoErrors: string[] = [];
+          for (let j = 0; j < item.photos.length; j++) {
+            try {
+              const photoUrl = item.photos[j];
+              console.log(`[DataContext] Processando foto ${j+1}/${item.photos.length} do item ${i+1}`);
+              
+              const { error: photoError } = await supabase
+                .from('exchange_photos')
+                .insert([{
+                  exchange_item_id: itemData.id,
+                  photo_url: photoUrl
+                }]);
+                
+              if (photoError) {
+                console.error(`[DataContext] Erro ao inserir foto ${j+1} do item ${i+1}:`, photoError);
+                photoErrors.push(`Foto ${j+1}`);
+                continue; // Continuar para a próxima foto mesmo com erro
+              }
+              
+              console.log(`[DataContext] Foto ${j+1} do item ${i+1} salva com sucesso`);
+            } catch (photoException) {
+              console.error(`[DataContext] Exceção ao processar foto ${j+1} do item ${i+1}:`, photoException);
+              photoErrors.push(`Foto ${j+1}`);
+            }
+          }
+          
+          if (photoErrors.length > 0) {
+            console.warn(`[DataContext] Item ${i+1} foi salvo, mas ${photoErrors.length} fotos tiveram erro:`, photoErrors);
+            toast.info(`Algumas fotos do item ${i+1} não puderam ser salvas.`);
+          }
+        } catch (itemException) {
+          console.error(`[DataContext] Exceção ao processar item ${i+1}:`, itemException);
+          itemsWithErrors.push(`Item ${i+1}`);
         }
+      }
+      
+      if (itemsWithErrors.length > 0) {
+        console.warn(`[DataContext] Troca criada, mas ${itemsWithErrors.length} itens tiveram erro:`, itemsWithErrors);
+        toast.info(`Registro salvo, mas alguns itens podem estar incompletos.`);
       }
       
       // Buscar a troca completa para atualizar o state
       await fetchExchangeAndUpdateState(exchangeData.id);
       
-      toast.success('Registro adicionado com sucesso');
+      // Mensagem de sucesso baseada em se houve erros parciais
+      if (itemsWithErrors.length === 0) {
+        toast.success('Registro adicionado com sucesso');
+      } else {
+        toast.success('Registro adicionado, porém com alguns problemas');
+      }
+      
+      console.log('[DataContext] Processo de adição de troca finalizado');
     } catch (error) {
-      console.error('Erro ao adicionar registro de troca:', error);
+      console.error('[DataContext] Erro crítico ao adicionar registro de troca:', error);
       toast.error('Erro ao adicionar registro');
     } finally {
       setIsLoading(false);
