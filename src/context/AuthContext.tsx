@@ -138,39 +138,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (profile && isMounted) {
               setUser(profile);
               logStateChange(`onAuthStateChange ${event}: Profile loaded, user set.`);
+              // Após login bem-sucedido, navegar para o dashboard
+              if (event === 'SIGNED_IN') {
+                navigate('/dashboard');
+              }
             } else if (!profile && isMounted) {
               logStateChange(`onAuthStateChange ${event}: Profile not found after ${event}, signing out.`);
               toast.error('Falha ao carregar perfil após autenticação. Desconectando.');
               await supabase.auth.signOut(); // Listener pegará o SIGNED_OUT
             } else if (!isMounted) {
-              logStateChange(`onAuthStateChange ${event}: Component unmounted during profile fetch. Ignoring setUser.`);
+              logStateChange(`onAuthStateChange ${event}: Component unmounted during fetch. Ignoring.`);
             }
-            if (isMounted) setIsLoading(false);
-          } else {
-            // Caso raro: SIGNED_IN sem sessão? Limpar tudo.
-            logStateChange(`onAuthStateChange ${event}: Event received BUT no session. Clearing state.`);
-            setUser(null);
-            setSession(null);
-            if (isMounted) setIsLoading(false);
+          }
+          // Sempre definir isLoading como false após o processamento
+          if (isMounted) {
+            setIsLoading(false);
           }
         } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          setSession(null);
-          logStateChange('onAuthStateChange SIGNED_OUT: User state cleared.');
-          if (isMounted) setIsLoading(false); // Garante que o loading termina no logout
-        } else if (event === 'USER_UPDATED' && currentSession) {
-            logStateChange('onAuthStateChange USER_UPDATED: Re-fetching profile...');
-            setIsLoading(true);
+          logStateChange(`onAuthStateChange ${event}: Clearing user state.`);
+          if (isMounted) {
+            setUser(null);
+            setSession(null);
+            setIsLoading(false);
+          }
+        } else if (event === 'USER_UPDATED') {
+          logStateChange(`onAuthStateChange ${event}: User updated, refreshing profile.`);
+          if (currentSession && isMounted) {
             const profile = await fetchUserProfile(currentSession.user.id);
-            if (profile && isMounted) setUser(profile);
-            if (isMounted) setIsLoading(false);
-        } else if (event === 'TOKEN_REFRESHED') {
-            logStateChange('onAuthStateChange TOKEN_REFRESHED: Session updated.');
-            // A sessão já foi atualizada, isLoading não deve mudar aqui geralmente
+            if (profile) {
+              setUser(profile);
+            }
+            setIsLoading(false);
+          }
         } else if (event === 'PASSWORD_RECOVERY') {
-            logStateChange('onAuthStateChange PASSWORD_RECOVERY: User needs to set a new password.');
-            if (isMounted) setIsLoading(false); // Garante que loading não fique preso
-            navigate('/reset-password'); // Exemplo
+          logStateChange(`onAuthStateChange ${event}: Password recovery - not handling specifically.`);
+          if (isMounted) setIsLoading(false);
         }
       }
     );
@@ -230,8 +232,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false); // Termina loading no erro
       } else {
         logStateChange('login: Success. Waiting for onAuthStateChange.');
-        toast.success('Login iniciado...'); // onAuthStateChange cuidará do resto
-        // setIsLoading será false quando onAuthStateChange buscar o perfil
+        toast.success('Login realizado com sucesso!');
+        
+        // Verificar se onAuthStateChange não está sendo chamado
+        setTimeout(() => {
+          if (isLoading) {
+            logStateChange('login: Forçando finalização do login após timeout');
+            setIsLoading(false);
+            navigate('/dashboard');
+          }
+        }, 3000); // 3 segundos de timeout para garantir que o processo de login seja concluído
       }
     } catch (error) {
       logStateChange('login: Unexpected error', error);
@@ -239,7 +249,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false); // Termina loading no erro
     }
     // Não colocar finally setIsLoading(false) aqui, pois o sucesso depende do onAuthStateChange
-  }, []);
+  }, [navigate]);
 
   const register = useCallback(async (
     registration: string,
