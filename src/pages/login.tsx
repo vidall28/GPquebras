@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,6 +11,7 @@ const Login: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { login, isAuthenticated, resetPassword } = useAuth();
   const [isResetMode, setIsResetMode] = useState(false);
+  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,12 +27,20 @@ const Login: React.FC = () => {
       if (isResetMode) {
         await resetPassword(email);
         setIsResetMode(false);
+        setIsSubmitting(false);
       } else {
+        // Tentar login e navegar diretamente, sem esperar isAuthenticated mudar
         await login(email, password);
+        
+        // Forçar navegação após tentativa de login
+        setTimeout(() => {
+          console.log('Forçando navegação para dashboard');
+          navigate('/dashboard');
+          setIsSubmitting(false);
+        }, 1500);
       }
     } catch (error) {
       console.error('Login error:', error);
-    } finally {
       setIsSubmitting(false);
     }
   };
