@@ -1,7 +1,13 @@
-
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Camera, Trash } from 'lucide-react';
+import { Camera, Trash, Image as ImageIcon, X } from 'lucide-react';
+import { 
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+  DialogClose
+} from '@/components/ui/dialog';
 
 interface PhotoUploaderProps {
   photos: string[];
@@ -17,6 +23,35 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
   removePhoto 
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  
+  // Função para detectar se está em Android
+  const isAndroid = () => {
+    return /Android/i.test(navigator.userAgent);
+  };
+  
+  // Função para abrir o seletor de opções em dispositivos Android
+  const handlePhotoClick = () => {
+    if (isAndroid()) {
+      setIsDialogOpen(true);
+    } else {
+      // Em iOS e outros dispositivos, manter o comportamento atual
+      fileInputRef.current?.click();
+    }
+  };
+  
+  // Função para abrir a câmera
+  const openCamera = () => {
+    cameraInputRef.current?.click();
+    setIsDialogOpen(false);
+  };
+  
+  // Função para abrir a galeria
+  const openGallery = () => {
+    fileInputRef.current?.click();
+    setIsDialogOpen(false);
+  };
   
   return (
     <div className="space-y-2">
@@ -46,43 +81,82 @@ const PhotoUploader: React.FC<PhotoUploaderProps> = ({
                 </button>
               </div>
             ))}
-            <label
-              htmlFor="photo-upload"
+            <div
+              onClick={handlePhotoClick}
               className="flex items-center justify-center aspect-square rounded-md border border-dashed cursor-pointer hover:bg-accent/50 transition-colors"
             >
               <Camera className="h-8 w-8 text-muted-foreground" />
-              <input
-                id="photo-upload"
-                type="file"
-                multiple
-                accept="image/*"
-                className="hidden"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-              />
-            </label>
+            </div>
           </div>
         ) : (
-          <label
-            htmlFor="photo-upload"
+          <div
+            onClick={handlePhotoClick}
             className="flex flex-col items-center justify-center p-6 border-dashed border-2 rounded-md cursor-pointer hover:bg-accent/50 transition-colors"
           >
             <Camera className="h-10 w-10 text-muted-foreground mb-2" />
             <p className="text-muted-foreground">
-              Clique para selecionar fotos
+              Clique para adicionar fotos
             </p>
-            <input
-              id="photo-upload"
-              type="file"
-              multiple
-              accept="image/*"
-              className="hidden"
-              ref={fileInputRef}
-              onChange={handleFileChange}
-            />
-          </label>
+          </div>
         )}
       </div>
+      
+      {/* Input para selecionar da galeria (hidden) */}
+      <input
+        id="photo-upload"
+        type="file"
+        multiple
+        accept="image/*"
+        className="hidden"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+      />
+      
+      {/* Input para câmera (hidden) */}
+      <input
+        id="camera-upload"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        ref={cameraInputRef}
+        onChange={handleFileChange}
+      />
+      
+      {/* Diálogo de seleção para dispositivos Android */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogTitle>Escolha uma opção</DialogTitle>
+          <DialogDescription>
+            Como você deseja adicionar a foto?
+          </DialogDescription>
+          
+          <div className="grid grid-cols-2 gap-4 py-4">
+            <button
+              onClick={openCamera}
+              className="flex flex-col items-center justify-center p-4 border rounded-md hover:bg-accent/50 transition-colors"
+            >
+              <Camera className="h-10 w-10 text-primary mb-2" />
+              <span>Usar Câmera</span>
+            </button>
+            
+            <button
+              onClick={openGallery}
+              className="flex flex-col items-center justify-center p-4 border rounded-md hover:bg-accent/50 transition-colors"
+            >
+              <ImageIcon className="h-10 w-10 text-primary mb-2" />
+              <span>Galeria</span>
+            </button>
+          </div>
+          
+          <DialogClose asChild>
+            <Button type="button" variant="outline" className="w-full">
+              <X className="h-4 w-4 mr-2" />
+              Cancelar
+            </Button>
+          </DialogClose>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

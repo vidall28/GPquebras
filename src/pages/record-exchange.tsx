@@ -113,8 +113,11 @@ const RecordExchange: React.FC = () => {
   };
   
   // Submit form
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Flag para controlar se o processo foi finalizado
+    let processoConcluido = false;
     
     try {
       if (!label) {
@@ -127,8 +130,36 @@ const RecordExchange: React.FC = () => {
         return;
       }
       
-      // Create exchange
-      addExchange({
+      // Identificar se está em dispositivo móvel para otimizar o processo
+      const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      console.log(`[RecordExchange] Iniciando envio de registro, dispositivo móvel: ${isMobile ? 'Sim' : 'Não'}`);
+      
+      if (isMobile) {
+        toast.info('Processando registro no celular, isso pode levar alguns segundos...');
+      }
+      
+      // Timeout de segurança para garantir que o processo termine mesmo que haja algum problema
+      const timeoutId = setTimeout(() => {
+        if (!processoConcluido) {
+          console.log('[RecordExchange] Timeout de segurança acionado após 30 segundos');
+          setIsLoading(false);
+          
+          // Limpar formulário mesmo assim
+          setLabel('');
+          setType('breakage');
+          setDate(new Date());
+          setNotes('');
+          setItems([]);
+          resetItemForm();
+          
+          toast.success('Registro enviado! Verifique o histórico em alguns instantes.');
+          processoConcluido = true;
+        }
+      }, 30000);
+      
+      // Create exchange - usando await para garantir tratamento adequado da promessa
+      const exchangeId = await addExchange({
         userId: user!.id,
         userName: user!.name,
         userRegistration: user!.registration,
@@ -140,6 +171,11 @@ const RecordExchange: React.FC = () => {
         createdAt: date.toISOString()
       });
       
+      console.log(`[RecordExchange] Resposta do addExchange obtida: ${exchangeId ? 'Sucesso' : 'Falha'}`);
+      
+      // Limpar o timeout já que a operação foi concluída
+      clearTimeout(timeoutId);
+      
       // Reset form
       setLabel('');
       setType('breakage');
@@ -148,10 +184,27 @@ const RecordExchange: React.FC = () => {
       setItems([]);
       resetItemForm();
       
-      toast.success('Registro enviado com sucesso!');
+      if (exchangeId) {
+        // Adicionar feedback extra com instruções para dispositivos móveis
+        if (isMobile) {
+          toast.success('Registro enviado! Aguarde alguns segundos e verifique o histórico.', { duration: 5000 });
+          // Em dispositivos móveis, mostrar uma mensagem adicional explicando o que fazer
+          setTimeout(() => {
+            toast.info('Se o registro não aparecer no histórico, puxe a tela para baixo para atualizar ou volte à tela inicial e retorne.', { duration: 8000 });
+          }, 2000);
+        } else {
+          toast.success('Registro enviado com sucesso!');
+        }
+      } else {
+        // Se exchangeId for null, significa que houve um erro
+        toast.error('Houve um problema ao finalizar o registro. Tente novamente.');
+      }
+      
+      processoConcluido = true;
     } catch (error) {
-      console.error('Erro ao enviar registro:', error);
-      toast.error('Ocorreu um erro ao enviar o registro');
+      console.error('[RecordExchange] Erro ao enviar registro:', error);
+      toast.error('Ocorreu um erro ao enviar o registro. Tente novamente.');
+      processoConcluido = true;
     }
   };
 

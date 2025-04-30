@@ -48,7 +48,7 @@ interface DataContextType {
   
   // Exchanges
   exchanges: Exchange[];
-  addExchange: (exchange: Omit<Exchange, 'id' | 'createdAt'>) => Promise<void>;
+  addExchange: (exchange: Omit<Exchange, 'id' | 'createdAt'>) => Promise<string | null>;
   updateExchange: (id: string, status: 'pending' | 'approved' | 'rejected', notes?: string, updatedBy?: string) => Promise<void>;
   deleteExchange: (id: string) => Promise<void>;
   getExchange: (id: string) => Exchange | undefined;
@@ -1158,8 +1158,25 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('[DataContext] Iniciando adição de troca/quebra:', { 
         label: exchange.label, 
         type: exchange.type, 
-        itensCount: exchange.items.length 
+        itensCount: exchange.items.length,
+        plataforma: isMobileDevice() ? 'mobile' : 'desktop'
       });
+      
+      // Verificar se o dispositivo é móvel para otimizar o processo
+      const isMobile = isMobileDevice();
+      
+      // Em dispositivos móveis, reduzir o tamanho das imagens ainda mais se necessário
+      if (isMobile) {
+        console.log('[DataContext] Processando em dispositivo móvel, otimizando imagens');
+        exchange.items = await Promise.all(exchange.items.map(async (item) => {
+          // Se houver muitas fotos em um item para dispositivo móvel, limitar
+          if (item.photos.length > 3) {
+            console.log(`[DataContext] Limitando fotos do item para dispositivo móvel (${item.photos.length} -> 3)`);
+            item.photos = item.photos.slice(0, 3);
+          }
+          return item;
+        }));
+      }
       
       // 1. Inserir a troca principal
       const { data: exchangeData, error: exchangeError } = await supabase
@@ -1188,6 +1205,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // 2. Inserir os itens da troca
       const itemsWithErrors: string[] = [];
+      const successfulExchangeItems: Array<{id: string, photos: string[]}> = [];
+      
       for (let i = 0; i < exchange.items.length; i++) {
         const item = exchange.items[i];
         try {
@@ -1223,30 +1242,51 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           
           console.log(`[DataContext] Item ${i+1} criado com sucesso, ID: ${itemData.id}`);
           
+          // Rastrear itens criados com sucesso para garantir que seja adicionado ao state
+          successfulExchangeItems.push({
+            id: itemData.id,
+            photos: [...item.photos]
+          });
+          
           // Inserir as fotos do item com tratamento de erro por foto
+          // Em dispositivos móveis, processar fotos em lotes menores para evitar timeout
           const photoErrors: string[] = [];
-          for (let j = 0; j < item.photos.length; j++) {
-            try {
-              const photoUrl = item.photos[j];
-              console.log(`[DataContext] Processando foto ${j+1}/${item.photos.length} do item ${i+1}`);
-              
-              const { error: photoError } = await supabase
-                .from('exchange_photos')
-                .insert([{
-                  exchange_item_id: itemData.id,
-                  photo_url: photoUrl
-                }]);
+          const batchSize = isMobile ? 1 : 3; // Processar uma foto de cada vez em dispositivos móveis
+          
+          for (let j = 0; j < item.photos.length; j += batchSize) {
+            const batch = item.photos.slice(j, j + batchSize);
+            const batchPromises = batch.map(async (photoUrl, batchIndex) => {
+              const photoIndex = j + batchIndex;
+              try {
+                console.log(`[DataContext] Processando foto ${photoIndex+1}/${item.photos.length} do item ${i+1}`);
                 
-              if (photoError) {
-                console.error(`[DataContext] Erro ao inserir foto ${j+1} do item ${i+1}:`, photoError);
-                photoErrors.push(`Foto ${j+1}`);
-                continue; // Continuar para a próxima foto mesmo com erro
+                const { error: photoError } = await supabase
+                  .from('exchange_photos')
+                  .insert([{
+                    exchange_item_id: itemData.id,
+                    photo_url: photoUrl
+                  }]);
+                  
+                if (photoError) {
+                  console.error(`[DataContext] Erro ao inserir foto ${photoIndex+1} do item ${i+1}:`, photoError);
+                  return `Foto ${photoIndex+1}`;
+                }
+                
+                console.log(`[DataContext] Foto ${photoIndex+1} do item ${i+1} salva com sucesso`);
+                return null;
+              } catch (photoException) {
+                console.error(`[DataContext] Exceção ao processar foto ${photoIndex+1} do item ${i+1}:`, photoException);
+                return `Foto ${photoIndex+1}`;
               }
-              
-              console.log(`[DataContext] Foto ${j+1} do item ${i+1} salva com sucesso`);
-            } catch (photoException) {
-              console.error(`[DataContext] Exceção ao processar foto ${j+1} do item ${i+1}:`, photoException);
-              photoErrors.push(`Foto ${j+1}`);
+            });
+            
+            // Aguardar o processamento do lote atual antes de continuar
+            const batchResults = await Promise.all(batchPromises);
+            photoErrors.push(...batchResults.filter(Boolean) as string[]);
+            
+            // Em dispositivos móveis, adicionar uma pequena pausa entre os lotes para evitar sobrecarga
+            if (isMobile && j + batchSize < item.photos.length) {
+              await new Promise(resolve => setTimeout(resolve, 200));
             }
           }
           
@@ -1265,8 +1305,51 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toast.info(`Registro salvo, mas alguns itens podem estar incompletos.`);
       }
       
-      // Buscar a troca completa para atualizar o state
-      await fetchExchangeAndUpdateState(exchangeData.id);
+      // 3. Buscar a troca completa para atualizar o state e certificar que aparece no histórico
+      try {
+        console.log('[DataContext] Atualizando state com nova troca...');
+        await fetchExchangeAndUpdateState(exchangeData.id);
+        
+        // Verificar se a troca foi realmente adicionada ao state
+        const exchangeInState = exchanges.find(e => e.id === exchangeData.id);
+        if (!exchangeInState) {
+          console.warn('[DataContext] Troca não encontrada no state após fetchExchangeAndUpdateState. Adicionando manualmente.');
+          
+          // Se não estiver no state após fetchExchangeAndUpdateState, criar manualmente
+          // uma versão simplificada para garantir que apareça no histórico
+          const manualExchange: Exchange = {
+            id: exchangeData.id,
+            userId: exchange.userId,
+            userName: exchange.userName,
+            userRegistration: exchange.userRegistration,
+            label: exchange.label,
+            type: exchange.type,
+            items: exchange.items.map((item, idx) => ({
+              ...item,
+              id: successfulExchangeItems[idx]?.id || `temp-${Date.now()}-${idx}`
+            })),
+            status: exchange.status,
+            notes: exchange.notes,
+            createdAt: new Date().toISOString(),
+          };
+          
+          // Adicionar ao state manualmente
+          setExchanges(prev => {
+            // Verificar se já não existe para evitar duplicatas
+            if (prev.some(e => e.id === manualExchange.id)) return prev;
+            return [manualExchange, ...prev];
+          });
+        }
+      } catch (stateError) {
+        console.error('[DataContext] Erro ao atualizar state com nova troca:', stateError);
+        
+        // Ainda assim, fazer uma tentativa final de recarregar todas as trocas
+        setTimeout(() => {
+          fetchExchanges(true).catch(e => 
+            console.error('[DataContext] Erro no recarregamento final de trocas:', e)
+          );
+        }, 2000);
+      }
       
       // Mensagem de sucesso baseada em se houve erros parciais
       if (itemsWithErrors.length === 0) {
@@ -1276,9 +1359,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       console.log('[DataContext] Processo de adição de troca finalizado');
+      
+      // Para dispositivos móveis, forçar uma atualização de dados depois de um período
+      // para garantir que a lista de trocas será atualizada
+      if (isMobile) {
+        setTimeout(() => {
+          console.log('[DataContext] Recarregando trocas após adição em dispositivo móvel');
+          fetchExchanges(true);
+        }, 5000);
+      }
+      
+      return exchangeData.id;
     } catch (error) {
       console.error('[DataContext] Erro crítico ao adicionar registro de troca:', error);
       toast.error('Erro ao adicionar registro');
+      return null;
     } finally {
       setIsLoading(false);
     }
@@ -1335,4 +1430,10 @@ export const useData = () => {
     throw new Error('useData must be used within a DataProvider');
   }
   return context;
+};
+
+// Detectar se é dispositivo móvel
+const isMobileDevice = (): boolean => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+         (window.innerWidth <= 768);
 };

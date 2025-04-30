@@ -1,6 +1,12 @@
 import React from 'react';
 import { toast } from '@/lib/toast';
 
+// Constantes para configuração de imagens
+const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2MB (reduzido de 5MB)
+const MAX_FILES_COUNT = 5; // Reduzido de 10 para melhor desempenho em dispositivos móveis
+const MAX_WIDTH = 600; // Reduzido de 800px para melhor desempenho
+const IMAGE_QUALITY = 0.6; // Reduzido de 0.7 para melhor compressão
+
 // Handle image file upload and convert to base64
 export const handleImageUpload = (
   files: FileList | null, 
@@ -8,28 +14,29 @@ export const handleImageUpload = (
 ) => {
   if (!files || files.length === 0) return;
   
-  const maxSize = 5 * 1024 * 1024; // 5MB
-  const maxFilesCount = 10; // Limite máximo de arquivos
-  
   // Verificar se não excede o limite de arquivos
-  if (files.length > maxFilesCount) {
-    toast.error(`Limite máximo de ${maxFilesCount} fotos excedido`);
+  if (files.length > MAX_FILES_COUNT) {
+    toast.error(`Limite máximo de ${MAX_FILES_COUNT} fotos excedido`);
     return;
   }
   
-  console.log(`[ImageUtils] Processando ${files.length} imagens`);
+  console.log(`[ImageUtils] Processando ${files.length} imagens no dispositivo ${isMobileDevice() ? 'móvel' : 'desktop'}`);
+  
+  // Verificar se está em dispositivo móvel para otimizar ainda mais
+  const targetWidth = isMobileDevice() ? Math.min(MAX_WIDTH, 400) : MAX_WIDTH;
+  const targetQuality = isMobileDevice() ? Math.min(IMAGE_QUALITY, 0.5) : IMAGE_QUALITY;
   
   // Convert files to base64
   Array.from(files).forEach(file => {
-    if (file.size > maxSize) {
-      toast.error(`A imagem ${file.name} é muito grande (máx. 5MB)`);
+    if (file.size > MAX_IMAGE_SIZE) {
+      toast.error(`A imagem ${file.name} é muito grande (máx. 2MB)`);
       return;
     }
     
     console.log(`[ImageUtils] Processando imagem: ${file.name}, tamanho: ${(file.size / 1024).toFixed(2)}KB`);
     
     // Otimizar a imagem antes de converter para base64
-    compressImage(file, 800, 0.7)
+    compressImage(file, targetWidth, targetQuality)
       .then(compressedFile => {
         console.log(`[ImageUtils] Imagem comprimida: ${(compressedFile.size / 1024).toFixed(2)}KB (original: ${(file.size / 1024).toFixed(2)}KB)`);
         
@@ -37,8 +44,40 @@ export const handleImageUpload = (
         reader.onload = (e) => {
           if (e.target?.result) {
             const base64 = e.target.result as string;
-            console.log(`[ImageUtils] Imagem convertida para base64, tamanho: ${(base64.length / 1024).toFixed(2)}KB`);
-            setPhotos(prev => [...prev, base64]);
+            
+            // Verificar se a string base64 não é muito grande
+            if (base64.length > 500000 && isMobileDevice()) {
+              // Se ainda for grande em dispositivo móvel, comprimir novamente
+              console.log(`[ImageUtils] Imagem ainda grande em mobile (${(base64.length/1024).toFixed(2)}KB), comprimindo novamente`);
+              
+              // Criar uma imagem temporária para recomprimir
+              const img = new Image();
+              img.onload = () => {
+                const canvas = document.createElement('canvas');
+                // Reduzir ainda mais a resolução
+                const width = img.width * 0.7;
+                const height = img.height * 0.7;
+                
+                canvas.width = width;
+                canvas.height = height;
+                
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                  ctx.drawImage(img, 0, 0, width, height);
+                  // Usar qualidade ainda menor
+                  const recompressedBase64 = canvas.toDataURL('image/jpeg', 0.4);
+                  console.log(`[ImageUtils] Imagem recomprimida: ${(recompressedBase64.length/1024).toFixed(2)}KB`);
+                  setPhotos(prev => [...prev, recompressedBase64]);
+                } else {
+                  // Usar a original se não conseguir recomprimir
+                  setPhotos(prev => [...prev, base64]);
+                }
+              };
+              img.src = base64;
+            } else {
+              console.log(`[ImageUtils] Imagem convertida para base64, tamanho: ${(base64.length / 1024).toFixed(2)}KB`);
+              setPhotos(prev => [...prev, base64]);
+            }
           }
         };
         reader.onerror = (e) => {
@@ -50,6 +89,20 @@ export const handleImageUpload = (
       .catch(error => {
         console.error(`[ImageUtils] Erro ao comprimir imagem:`, error);
         toast.error(`Erro ao processar a imagem ${file.name}`);
+        
+        // Tentar um fallback com a imagem original em caso de erro
+        try {
+          console.log(`[ImageUtils] Tentando fallback com imagem original`);
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            if (e.target?.result) {
+              setPhotos(prev => [...prev, e.target!.result as string]);
+            }
+          };
+          reader.readAsDataURL(file);
+        } catch (fallbackError) {
+          console.error(`[ImageUtils] Fallback também falhou:`, fallbackError);
+        }
       });
   });
 };
@@ -85,17 +138,24 @@ const compressImage = (file: File, maxWidth: number, quality: number): Promise<B
         
         ctx.drawImage(img, 0, 0, width, height);
         
-        canvas.toBlob(
-          blob => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              reject(new Error('Falha ao converter canvas para Blob'));
-            }
-          },
-          'image/jpeg',
-          quality
-        );
+        // Usar timeout para evitar congelamento em dispositivos móveis
+        setTimeout(() => {
+          try {
+            canvas.toBlob(
+              blob => {
+                if (blob) {
+                  resolve(blob);
+                } else {
+                  reject(new Error('Falha ao converter canvas para Blob'));
+                }
+              },
+              'image/jpeg',
+              quality
+            );
+          } catch (canvasError) {
+            reject(canvasError);
+          }
+        }, 0);
       };
       
       img.onerror = () => {
@@ -106,4 +166,10 @@ const compressImage = (file: File, maxWidth: number, quality: number): Promise<B
       reject(error);
     }
   });
+};
+
+// Detectar se é dispositivo móvel
+const isMobileDevice = (): boolean => {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+         (window.innerWidth <= 768);
 };
