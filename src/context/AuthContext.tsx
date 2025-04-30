@@ -62,8 +62,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return currentUser;
       } else {
         logStateChange('fetchUserProfile: Profile not found in DB', `UserID: ${userId}`);
-        toast.error('Perfil de usuário não encontrado na base de dados.');
-        return null;
+        
+        // Em vez de mostrar toast de erro e retornar null, vamos tentar criar o perfil básico
+        // Este trecho ajuda quando a autenticação funciona mas o perfil não existe no banco
+        try {
+          logStateChange('fetchUserProfile: Tentando criar perfil básico para o usuário', userId);
+          const authUserResponse = await supabase.auth.getUser();
+          
+          if (authUserResponse.error) {
+            logStateChange('fetchUserProfile: Erro ao obter dados do usuário autenticado', authUserResponse.error);
+            return null;
+          }
+          
+          const authUser = authUserResponse.data.user;
+          if (!authUser || !authUser.email) {
+            logStateChange('fetchUserProfile: Usuário autenticado sem email', authUser);
+            return null;
+          }
+          
+          // Criar um perfil básico
+          const { error: insertError } = await supabase
+            .from('users')
+            .insert({
+              id: userId,
+              email: authUser.email,
+              name: authUser.email.split('@')[0], // Nome básico a partir do email
+              registration: '0000000', // Matrícula padrão
+              role: 'user',
+              status: 'active'
+            });
+            
+          if (insertError) {
+            logStateChange('fetchUserProfile: Erro ao criar perfil básico', insertError);
+            return null;
+          }
+          
+          // Buscar o perfil recém-criado
+          return {
+            id: userId,
+            email: authUser.email,
+            name: authUser.email.split('@')[0],
+            registration: '0000000',
+            role: 'user',
+            status: 'active'
+          };
+        } catch (createError) {
+          logStateChange('fetchUserProfile: Erro ao criar perfil básico', createError);
+          toast.error('Não foi possível criar seu perfil. Tente fazer logout e login novamente.');
+          return null;
+        }
       }
     } catch (error) {
       logStateChange('fetchUserProfile: Unexpected error', error);
@@ -144,10 +191,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
             } else if (!profile && isMounted) {
               logStateChange(`onAuthStateChange ${event}: Profile not found after ${event}, signing out.`);
-              toast.error('Falha ao carregar perfil após autenticação. Desconectando.');
+              toast.error('Falha ao carregar perfil após autenticação. Você será desconectado.');
               await supabase.auth.signOut(); // Listener pegará o SIGNED_OUT
-            } else if (!isMounted) {
-              logStateChange(`onAuthStateChange ${event}: Component unmounted during fetch. Ignoring.`);
             }
           }
           // Sempre definir isLoading como false após o processamento
@@ -238,8 +283,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setTimeout(() => {
           if (isLoading) {
             logStateChange('login: Forçando finalização do login após timeout');
-            setIsLoading(false);
-            navigate('/dashboard');
+            
+            // Verificar estado da sessão manualmente se o evento não foi processado
+            supabase.auth.getSession().then(async ({ data }) => {
+              if (data.session) {
+                logStateChange('login: Sessão encontrada manualmente, buscando perfil...');
+                const profile = await fetchUserProfile(data.session.user.id);
+                if (profile) {
+                  setUser(profile);
+                  setSession(data.session);
+                  navigate('/dashboard');
+                }
+              }
+              setIsLoading(false);
+            });
           }
         }, 3000); // 3 segundos de timeout para garantir que o processo de login seja concluído
       }
@@ -249,7 +306,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(false); // Termina loading no erro
     }
     // Não colocar finally setIsLoading(false) aqui, pois o sucesso depende do onAuthStateChange
-  }, [navigate]);
+  }, [navigate, fetchUserProfile, isLoading]);
 
   const register = useCallback(async (
     registration: string,
@@ -356,33 +413,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [navigate]);
 
   const logout = useCallback(async () => {
-    logStateChange('logout: Attempting...');
+    logStateChange('logout: Executing...');
     setIsLoading(true);
     try {
+      // Logout do Supabase Auth
       const { error } = await supabase.auth.signOut();
+      
+      // Limpar local storage e session storage de forma mais agressiva
+      localStorage.removeItem('sb-auth-token');
+      localStorage.removeItem('sb-refresh-token');
+      localStorage.removeItem('supabase.auth.token');
+      
       if (error) {
-        logStateChange('logout: Error during signOut', error);
-        toast.error(`Erro ao sair: ${error.message}`);
-        // Mesmo com erro, tentar limpar localmente e navegar
+        logStateChange('logout: Error', error);
+        toast.error(`Erro ao fazer logout: ${error.message}`);
+      } else {
+        logStateChange('logout: Success');
+        toast.success('Logout realizado com sucesso!');
+        
+        // Forçar limpeza de estado e redirecionamento
         setUser(null);
         setSession(null);
-        navigate('/login');
-      } else {
-        logStateChange('logout: signOut successful. Waiting for onAuthStateChange.');
-        // setUser(null) e setSession(null) serão feitos pelo onAuthStateChange
+        
+        // Forçar redirecionamento para login
+        setTimeout(() => {
+          navigate('/login');
+        }, 100);
       }
     } catch (error) {
       logStateChange('logout: Unexpected error', error);
-      toast.error('Erro inesperado ao sair.');
-       // Garantir limpeza local em caso de erro catastrófico
-       setUser(null);
-       setSession(null);
-       navigate('/login');
+      toast.error('Erro inesperado durante logout.');
     } finally {
-       // O isLoading será definido como false pelo onAuthStateChange (SIGNED_OUT)
-       // Mas podemos adicionar aqui por segurança se o evento falhar
-       setIsLoading(false);
-       logStateChange('logout: Finished.');
+      setIsLoading(false);
     }
   }, [navigate]);
 
