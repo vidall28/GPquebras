@@ -132,57 +132,105 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cacheKey = isAdmin ? 'all_exchanges' : `user_exchanges_${user.id}`;
       const isMobile = isMobileDevice();
       
-      // Forçar limpeza de cache se solicitado ou em dispositivos móveis
-      if (forceRefresh || isMobile) {
-        console.log(`Forçando atualização e limpando cache. Dispositivo móvel: ${isMobile ? 'sim' : 'não'}`);
+      // Verificar se há uma conexão lenta para aplicar otimizações adicionais
+      const isSlowConnection = (window as any).isSlowConnection;
+      
+      // Forçar limpeza de cache se solicitado ou primeira carga em móveis
+      let shouldRefresh = forceRefresh;
+      
+      // Usar sessionStorage para evitar refreshes desnecessários em dispositivos móveis
+      if (isMobile) {
+        const lastRefresh = sessionStorage.getItem('lastExchangeRefresh');
+        const now = Date.now();
+        
+        // Só forçar refresh em mobile se a última atualização foi há mais de 2 minutos
+        if (!lastRefresh || (now - parseInt(lastRefresh)) > 120000) {
+          shouldRefresh = true;
+          sessionStorage.setItem('lastExchangeRefresh', now.toString());
+          console.log('[DataContext] Forçando atualização no mobile após tempo limite');
+        } else {
+          console.log('[DataContext] Usando cache recente para mobile');
+        }
+      }
+      
+      if (shouldRefresh) {
+        console.log(`[DataContext] Limpando cache. Dispositivo móvel: ${isMobile ? 'sim' : 'não'}, Conexão lenta: ${isSlowConnection ? 'sim' : 'não'}`);
         clearCache(cacheKey);
       }
       
-      // Buscar dados com cache baseado no perfil do usuário
-      // Tempo de cache reduzido para dispositivos móveis
-      const cacheTime = isMobile ? 15 : 60; // 15 segundos para mobile, 60 para desktop
+      // Tempos de cache adaptados à velocidade da conexão
+      let cacheTime = 60; // Padrão: 1 minuto
+      
+      if (isMobile) {
+        // Mobile padrão: 30 segundos
+        cacheTime = 30;
+        
+        // Conexão lenta: 2 minutos para reduzir chamadas ao servidor
+        if (isSlowConnection) {
+          cacheTime = 120;
+          console.log('[DataContext] Usando tempo de cache estendido para conexão lenta');
+        }
+      }
+      
+      // Limitar campos em conexões lentas para melhorar desempenho
+      let selectQuery = `
+        *,
+        exchange_items (
+          *,
+          exchange_photos (*)
+        )
+      `;
+      
+      // Em conexões lentas, buscar menos dados inicialmente
+      if (isSlowConnection) {
+        selectQuery = `
+          id, user_id, label, type, status, notes, created_at, updated_at, updated_by,
+          exchange_items (
+            id, product_id, quantity, reason
+          )
+        `;
+        console.log('[DataContext] Usando consulta otimizada para conexão lenta');
+      }
       
       const result = await getCachedOrFetch(cacheKey, async () => {
-        // Criar a consulta base
+        // Criar a consulta base com seleção adaptada
         let query = supabase
           .from('exchanges')
-          .select(`
-            *,
-            exchange_items (
-              *,
-              exchange_photos (*)
-            )
-          `);
+          .select(selectQuery);
           
         // Filtrar por usuário se não for admin
-        // Removendo o filtro por usuário para administradores
-        // Isso permitirá que as políticas RLS do banco determinem a visibilidade dos registros
         if (!isAdmin) {
           query = query.eq('user_id', user.id);
+        }
+        
+        // Em conexões lentas, limitar o número de registros para carregamento inicial
+        if (isSlowConnection) {
+          query = query.limit(10);
+          console.log('[DataContext] Limitando registros para conexão lenta');
         }
         
         // Ordenar por data de criação (mais recentes primeiro)
         query = query.order('created_at', { ascending: false });
         
-        console.log('Consultando trocas/quebras. Usuário é admin?', isAdmin);
+        console.log('[DataContext] Consultando trocas/quebras. Usuário é admin?', isAdmin);
         const { data, error } = await query;
         
         if (error) {
-          console.error('Erro ao buscar trocas/quebras:', error);
+          console.error('[DataContext] Erro ao buscar trocas/quebras:', error);
           throw error;
         }
         
-        console.log(`Encontradas ${data?.length || 0} trocas/quebras`);
-        console.log('Dados brutos das trocas:', data);
+        console.log(`[DataContext] Encontradas ${data?.length || 0} trocas/quebras`);
         
         // Processar os dados para o formato da aplicação
         const processedExchanges: Exchange[] = data?.map(exchange => {
+          // Para conexões lentas, garantir estrutura consistente mesmo com dados limitados
           const items = exchange.exchange_items.map((item: any) => ({
             id: item.id,
             productId: item.product_id,
             quantity: item.quantity,
             reason: item.reason,
-            photos: item.exchange_photos.map((photo: any) => photo.photo_url)
+            photos: item.exchange_photos ? item.exchange_photos.map((photo: any) => photo.photo_url) : []
           }));
           
           return {
@@ -193,11 +241,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             label: exchange.label,
             type: exchange.type,
             status: exchange.status,
-            notes: exchange.notes,
+            notes: exchange.notes || '',
             items: items,
             createdAt: exchange.created_at,
-            updatedAt: exchange.updated_at,
-            updatedBy: exchange.updated_by
+            updatedAt: exchange.updated_at || '',
+            updatedBy: exchange.updated_by || ''
           };
         }) || [];
         
@@ -1542,13 +1590,44 @@ export const useData = () => {
 
 // Melhorar a detecção de dispositivos móveis
 const isMobileDevice = (): boolean => {
-  // Checagem mais robusta para dispositivos móveis
-  const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera || '';
-  const isMobileByAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet|ipad/i.test(userAgent.toLowerCase());
-  const isMobileBySize = window.innerWidth <= 768 || window.innerHeight <= 600;
-  
-  console.log(`[DetectorMobile] Agente: ${userAgent.substring(0, 50)}...`);
-  console.log(`[DetectorMobile] Detecção: Agente=${isMobileByAgent}, Tamanho=${isMobileBySize}, Final=${isMobileByAgent || isMobileBySize}`);
-  
-  return isMobileByAgent || isMobileBySize;
+  try {
+    // Detectar por User Agent (mais confiável)
+    const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+    const isMobileByAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet|ipad/i.test(userAgent.toLowerCase());
+    
+    // Detectar por tamanho da tela (backup)
+    const isMobileBySize = window.innerWidth <= 768 || window.innerHeight <= 600;
+    
+    // Detectar por recursos específicos de dispositivos móveis
+    const hasTouchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    
+    // Verificar se a conexão é lenta (para otimizações)
+    const connection = (navigator as any).connection;
+    const isSlowConnection = connection && 
+      (connection.type === 'cellular' || connection.effectiveType === 'slow-2g' || 
+       connection.effectiveType === '2g' || connection.saveData === true);
+    
+    // Log detalhado para diagnóstico
+    console.log(`[DetectorMobile] Detecção: UA=${isMobileByAgent}, Tamanho=${isMobileBySize}, Touch=${hasTouchSupport}, ConexãoLenta=${isSlowConnection || 'desconhecido'}`);
+    
+    // Se a conexão for lenta, definir uma flag global para outras otimizações
+    if (isSlowConnection) {
+      (window as any).isSlowConnection = true;
+      console.log('[DetectorMobile] Conexão lenta detectada - ativando otimizações');
+    }
+    
+    // Armazenar o resultado no sessionStorage para consistência entre carregamentos
+    const result = isMobileByAgent || isMobileBySize || hasTouchSupport;
+    try {
+      sessionStorage.setItem('isMobileDevice', result ? 'true' : 'false');
+    } catch (e) {
+      console.error('[DetectorMobile] Erro ao armazenar no sessionStorage:', e);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('[DetectorMobile] Erro na detecção de dispositivo móvel:', error);
+    // Em caso de erro, usar um fallback baseado apenas no tamanho da tela
+    return window.innerWidth <= 768;
+  }
 };

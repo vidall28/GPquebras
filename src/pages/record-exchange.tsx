@@ -113,7 +113,80 @@ const RecordExchange: React.FC = () => {
     }
   };
   
-  // Submit form
+  // Detectar dispositivo móvel e conexão
+  const detectMobileAndConnection = () => {
+    // Resultado padrão
+    let result = {
+      isMobile: false,
+      isSlowConnection: false
+    };
+    
+    try {
+      // Primeiro tentar pegar do sessionStorage para evitar recálculos
+      const storedMobile = sessionStorage.getItem('isMobileDevice');
+      if (storedMobile !== null) {
+        result.isMobile = storedMobile === 'true';
+      } else {
+        // Checagem completa
+        const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+        result.isMobile = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i.test(userAgent.toLowerCase())
+                  || window.innerWidth <= 768
+                  || ('ontouchstart' in window);
+        
+        // Salvar resultado
+        try {
+          sessionStorage.setItem('isMobileDevice', result.isMobile ? 'true' : 'false');
+        } catch (e) {
+          console.error('Erro ao salvar detecção de mobile:', e);
+        }
+      }
+      
+      // Verificar conexão lenta
+      try {
+        const connection = (navigator as any).connection;
+        result.isSlowConnection = connection && 
+          (connection.type === 'cellular' || 
+           connection.effectiveType === 'slow-2g' || 
+           connection.effectiveType === '2g' ||
+           connection.saveData === true);
+      } catch (e) {
+        console.error('Erro ao verificar tipo de conexão:', e);
+      }
+    } catch (e) {
+      console.error('Erro na detecção de dispositivo/conexão:', e);
+      // Fallback simples em caso de erro
+      result.isMobile = window.innerWidth <= 768;
+    }
+    
+    return result;
+  };
+  
+  // Otimizar itens para conexões lentas
+  const getOptimizedItems = (originalItems, isSlowConnection) => {
+    if (!isSlowConnection || !originalItems || originalItems.length === 0) {
+      return originalItems;
+    }
+    
+    // Criar cópia profunda dos itens
+    try {
+      const optimized = JSON.parse(JSON.stringify(originalItems));
+      
+      for (let i = 0; i < optimized.length; i++) {
+        // Limitar o número de fotos em conexões lentas
+        if (optimized[i].photos && optimized[i].photos.length > 3) {
+          console.log(`Limitando fotos do item ${i} de ${optimized[i].photos.length} para 3`);
+          optimized[i].photos = optimized[i].photos.slice(0, 3);
+        }
+      }
+      
+      return optimized;
+    } catch (e) {
+      console.error('Erro ao otimizar itens:', e);
+      return originalItems;
+    }
+  };
+
+  // Submit form - Versão otimizada para dispositivos móveis
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -133,29 +206,53 @@ const RecordExchange: React.FC = () => {
       
       setIsLoading(true); // Ativar estado de carregamento
       
-      // Identificar se está em dispositivo móvel para otimizar o processo
-      const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      // Detectar dispositivo e tipo de conexão
+      const { isMobile, isSlowConnection } = detectMobileAndConnection();
+      console.log(`Iniciando envio: Mobile=${isMobile}, ConexãoLenta=${isSlowConnection}`);
       
-      console.log(`[RecordExchange] Iniciando envio de registro, dispositivo móvel: ${isMobile ? 'Sim' : 'Não'}`);
-      
+      // Otimizações para dispositivos móveis e conexões lentas
       if (isMobile) {
-        toast.info('Processando registro no celular, aguarde alguns instantes...', { duration: 10000 });
+        toast.info('Processando registro, aguarde alguns instantes...', { duration: 8000 });
         
-        // Adicionar uma notificação extra explicando o processo
-        setTimeout(() => {
-          if (!processoConcluido) {
-            toast.info('Estamos enviando suas fotos, isso pode levar um pouco mais de tempo dependendo da sua conexão...', { duration: 8000 });
-          }
-        }, 3000);
+        // Em conexões lentas, mostrar mensagem específica
+        if (isSlowConnection) {
+          setTimeout(() => {
+            if (!processoConcluido) {
+              toast.info('Sua conexão parece estar lenta. Continue aguardando enquanto enviamos seus dados...', { duration: 10000 });
+            }
+          }, 2000);
+        }
       }
       
-      // Timeout de segurança para garantir que o processo termine mesmo que haja algum problema
+      // Preparar itens otimizados para conexões lentas
+      const itemsToSend = getOptimizedItems(items, isSlowConnection);
+      
+      // Calcular tempo de timeout baseado na quantidade de dados
+      let totalFotos = 0;
+      itemsToSend.forEach(item => totalFotos += item.photos.length);
+      
+      // Ajustar timeout baseado na quantidade de fotos e tipo de conexão
+      let timeoutDuration = 20000; // Base: 20 segundos
+      
+      if (isMobile && isSlowConnection) {
+        timeoutDuration = 30000 + (totalFotos * 3000);
+      } else if (isMobile) {
+        timeoutDuration = 20000 + (totalFotos * 2000);
+      } else {
+        timeoutDuration = 15000 + (totalFotos * 1000);
+      }
+      
+      // Limitar o timeout máximo
+      timeoutDuration = Math.min(timeoutDuration, 60000); // Máx: 60 segundos
+      console.log(`Timeout configurado: ${timeoutDuration}ms para ${totalFotos} fotos`);
+      
+      // Timeout de segurança
       const timeoutId = setTimeout(() => {
         if (!processoConcluido) {
-          console.log('[RecordExchange] Timeout de segurança acionado');
+          console.log('Timeout de segurança acionado');
           setIsLoading(false);
           
-          // Limpar formulário mesmo assim
+          // Limpar formulário
           setLabel('');
           setType('breakage');
           setDate(new Date());
@@ -163,27 +260,32 @@ const RecordExchange: React.FC = () => {
           setItems([]);
           resetItemForm();
           
-          toast.success('Registro enviado! Verifique o histórico em alguns instantes.');
+          // Feedback diferente baseado na conexão
+          if (isSlowConnection) {
+            toast.info('Seu registro foi enviado, mas sua conexão está lenta. Verifique o histórico em alguns minutos.', { duration: 8000 });
+          } else {
+            toast.success('Registro enviado! Verifique o histórico em instantes.');
+          }
           processoConcluido = true;
         }
-      }, 15000); // Reduzido de 30s para 15s para melhorar a experiência em dispositivos móveis
+      }, timeoutDuration);
       
-      // Create exchange - usando await para garantir tratamento adequado da promessa
+      // Enviar para o servidor usando os itens otimizados
       const exchangeId = await addExchange({
         userId: user!.id,
         userName: user!.name,
         userRegistration: user!.registration,
         label,
         type,
-        items,
+        items: itemsToSend, // Usando os itens otimizados
         status: 'pending',
         notes: notes,
         createdAt: date.toISOString()
       });
       
-      console.log(`[RecordExchange] Resposta do addExchange obtida: ${exchangeId ? 'Sucesso' : 'Falha'}`);
+      console.log(`Resposta do addExchange: ${exchangeId ? 'Sucesso' : 'Falha'}`);
       
-      // Limpar o timeout já que a operação foi concluída
+      // Limpar o timeout
       clearTimeout(timeoutId);
       
       // Reset form
@@ -193,64 +295,66 @@ const RecordExchange: React.FC = () => {
       setNotes('');
       setItems([]);
       resetItemForm();
-      setIsLoading(false); // Desativar estado de carregamento
+      setIsLoading(false);
       
       if (exchangeId) {
-        // Adicionar feedback extra com instruções para dispositivos móveis
+        // Feedback específico para dispositivos móveis
         if (isMobile) {
-          toast.success('Registro enviado! Aguarde alguns segundos e verifique o histórico.', { duration: 5000 });
+          toast.success('Registro enviado com sucesso!');
           
-          // Armazenar o ID do último registro enviado para verificações futuras
+          // Armazenar ID para verificação futura
           try {
             localStorage.setItem('lastExchangeId', exchangeId);
             localStorage.setItem('lastExchangeTime', Date.now().toString());
-            console.log(`[RecordExchange] Registro salvo em localStorage: ${exchangeId}`);
           } catch (e) {
-            console.error('[RecordExchange] Erro ao salvar no localStorage:', e);
+            console.error('Erro ao salvar no localStorage:', e);
           }
           
-          // Em dispositivos móveis, mostrar uma mensagem adicional explicando o que fazer
-          setTimeout(() => {
-            toast.info('Se o registro não aparecer no histórico, puxe a tela para baixo para atualizar ou volte à página inicial e retorne.', { duration: 8000 });
-          }, 5000);
-          
-          // Forçar atualização do histórico - 1ª tentativa
-          setTimeout(() => {
-            console.log('[RecordExchange] Primeira atualização após adição em dispositivo móvel');
-            forceRefreshExchanges(exchangeId).catch(e => {
-              console.error('[RecordExchange] Erro ao atualizar histórico:', e);
-            });
-          }, 3000);
-          
-          // Segunda tentativa de atualização depois de um tempo maior
-          setTimeout(() => {
-            console.log('[RecordExchange] Segunda tentativa de atualização do histórico');
-            forceRefreshExchanges(exchangeId).catch(e => {
-              console.error('[RecordExchange] Erro na segunda tentativa de atualização:', e);
-            });
-          }, 8000);
-          
-          // Terceira tentativa com tempo ainda maior para garantir
-          setTimeout(() => {
-            console.log('[RecordExchange] Terceira e última tentativa de atualização do histórico');
-            forceRefreshExchanges(exchangeId).catch(e => {
-              console.error('[RecordExchange] Erro na terceira tentativa de atualização:', e);
-            });
-          }, 15000);
+          // Reduzir número de atualizações para evitar sobrecarga
+          if (isSlowConnection) {
+            // Em conexões lentas, apenas uma atualização após mais tempo
+            setTimeout(() => {
+              console.log('Tentativa única de atualização (conexão lenta)');
+              forceRefreshExchanges(exchangeId).catch(e => {
+                console.error('Erro na atualização:', e);
+              });
+            }, 5000);
+          } else {
+            // Em conexões normais, duas tentativas
+            setTimeout(() => {
+              console.log('Primeira atualização');
+              forceRefreshExchanges(exchangeId).catch(e => {
+                console.error('Erro na primeira atualização:', e);
+              });
+            }, 3000);
+            
+            setTimeout(() => {
+              console.log('Segunda atualização');
+              forceRefreshExchanges(exchangeId).catch(e => {
+                console.error('Erro na segunda atualização:', e);
+              });
+            }, 10000);
+          }
         } else {
           toast.success('Registro enviado com sucesso!');
+          
+          // Em desktop, uma única atualização é suficiente
+          setTimeout(() => {
+            forceRefreshExchanges(exchangeId).catch(e => {
+              console.error('Erro na atualização desktop:', e);
+            });
+          }, 1000);
         }
         processoConcluido = true;
       } else {
-        // Se exchangeId for null, significa que houve um erro
         toast.error('Houve um problema ao finalizar o registro. Tente novamente.');
       }
       
       processoConcluido = true;
     } catch (error) {
-      console.error('[RecordExchange] Erro ao enviar registro:', error);
+      console.error('Erro ao enviar registro:', error);
       toast.error('Ocorreu um erro ao enviar o registro. Tente novamente.');
-      setIsLoading(false); // Desativar estado de carregamento em caso de erro
+      setIsLoading(false);
       processoConcluido = true;
     }
   };

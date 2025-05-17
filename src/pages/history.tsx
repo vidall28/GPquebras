@@ -55,26 +55,71 @@ const History: React.FC = () => {
   const [selectedExchange, setSelectedExchange] = useState<typeof exchanges[0] | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   
-  // Verificar se há um registro recente para mostrar
+  // Verificar se há um registro recente para mostrar e melhorar carregamento em dispositivos móveis
   useEffect(() => {
-    console.log('[History] Verificando registros recentes...');
+    console.log('[History] Iniciando verificação de registros e otimizações para celular...');
     
-    // Verificar se há um registro recente no localStorage
+    // Detectar se é dispositivo móvel 
+    let isMobile = false;
+    let isSlowConnection = false;
+    
+    try {
+      // Verificar se está em dispositivo móvel
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+      const isMobileByAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i.test(userAgent.toLowerCase());
+      const isMobileByScreen = window.innerWidth <= 768;
+      const hasTouchScreen = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      
+      isMobile = isMobileByAgent || isMobileByScreen || hasTouchScreen;
+      
+      // Verificar se a conexão é lenta
+      const connection = (navigator as any).connection;
+      isSlowConnection = connection && 
+        (connection.type === 'cellular' || 
+         connection.effectiveType === 'slow-2g' || 
+         connection.effectiveType === '2g' ||
+         connection.saveData === true);
+         
+      console.log(`[History] Detecção: Mobile=${isMobile}, ConexãoLenta=${isSlowConnection}`);
+    } catch (e) {
+      console.error('[History] Erro na detecção de dispositivo:', e);
+    }
+    
+    // Em dispositivos móveis, mostrar indicador de carregamento imediatamente
+    if (isMobile) {
+      setIsRefreshing(true);
+    }
+    
+    // Verificar se há um registro recente
     try {
       const lastExchangeId = localStorage.getItem('lastExchangeId');
       const lastExchangeTime = localStorage.getItem('lastExchangeTime');
       
+      // Flag para indicar se um registro específico foi encontrado
+      let specificRecordFound = false;
+      
       if (lastExchangeId && lastExchangeTime) {
         const timeAgo = Date.now() - parseInt(lastExchangeTime);
         
-        // Se o registro foi feito há menos de 5 minutos, forçar atualização
-        if (timeAgo < 5 * 60 * 1000) {
-          console.log(`[History] Encontrado registro recente (${timeAgo / 1000}s atrás): ${lastExchangeId}`);
+        // Se o registro foi feito há menos de 10 minutos, forçar atualização
+        // (tempo aumentado para dispositivos móveis com conexões lentas)
+        if (timeAgo < 10 * 60 * 1000) {
+          specificRecordFound = true;
+          console.log(`[History] Registro recente encontrado (${Math.round(timeAgo / 1000)}s atrás): ${lastExchangeId}`);
           
-          setIsRefreshing(true);
+          // Em dispositivos móveis com conexão lenta, mostrar feedback visual
+          if (isMobile) {
+            if (isSlowConnection) {
+              toast.info('Carregando seu registro recente. Pode demorar um pouco devido à sua conexão...', { duration: 5000 });
+            } else {
+              toast.info('Carregando seu registro recente...', { duration: 3000 });
+            }
+          }
+          
+          // Primeira tentativa de carregar o registro específico
           forceRefreshExchanges(lastExchangeId)
             .then(success => {
-              console.log(`[History] Atualização forçada ${success ? 'bem-sucedida' : 'falhou'}`);
+              console.log(`[History] Atualização para registro específico ${success ? 'bem-sucedida' : 'falhou'}`);
               
               if (success) {
                 toast.success('Seu registro recente foi carregado com sucesso!');
@@ -82,18 +127,54 @@ const History: React.FC = () => {
                 // Limpar do localStorage após carregamento bem-sucedido
                 localStorage.removeItem('lastExchangeId');
                 localStorage.removeItem('lastExchangeTime');
+              } else if (isMobile) {
+                // Se falhou mas estamos em mobile, tentar novamente após um intervalo
+                setTimeout(() => {
+                  console.log('[History] Segunda tentativa de carregar registro específico...');
+                  forceRefreshExchanges(lastExchangeId)
+                    .then(secondSuccess => {
+                      if (secondSuccess) {
+                        toast.success('Seu registro foi carregado com sucesso!');
+                        localStorage.removeItem('lastExchangeId');
+                        localStorage.removeItem('lastExchangeTime');
+                      } else {
+                        toast.info('Não foi possível carregar seu registro específico. Puxe para baixo para atualizar.', { duration: 5000 });
+                      }
+                    })
+                    .catch(e => console.error('[History] Erro na segunda tentativa:', e))
+                    .finally(() => setIsRefreshing(false));
+                }, isSlowConnection ? 3000 : 1500);
+                
+                // Não desativar o indicador de carregamento aqui, será feito na segunda tentativa
+                return;
               }
             })
             .catch(e => {
-              console.error('[History] Erro na atualização forçada:', e);
+              console.error('[History] Erro na atualização para registro específico:', e);
             })
             .finally(() => {
-              setIsRefreshing(false);
+              if (!isMobile || !specificRecordFound) {
+                setIsRefreshing(false);
+              }
             });
         }
       }
+      
+      // Se não há registro específico mas estamos em dispositivo móvel,
+      // fazer uma atualização geral para carregar os dados mais recentes
+      if (isMobile && !specificRecordFound) {
+        // Pequena pausa para evitar sobrecarga
+        setTimeout(() => {
+          console.log('[History] Atualizando dados para dispositivo móvel sem registro específico');
+          forceRefreshExchanges()
+            .then(() => console.log('[History] Atualização geral para mobile concluída'))
+            .catch(e => console.error('[History] Erro na atualização geral para mobile:', e))
+            .finally(() => setIsRefreshing(false));
+        }, isSlowConnection ? 500 : 100);
+      }
     } catch (e) {
-      console.error('[History] Erro ao verificar localStorage:', e);
+      console.error('[History] Erro ao verificar ou carregar registros:', e);
+      setIsRefreshing(false);
     }
   }, [forceRefreshExchanges]);
   

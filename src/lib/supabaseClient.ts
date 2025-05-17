@@ -16,6 +16,64 @@ if (!supabaseUrl || !supabaseKey) {
   // Poderia lançar um erro aqui ou exibir uma mensagem mais visível ao usuário
 }
 
+// Detectar dispositivo móvel e tipo de conexão
+const detectMobileAndConnection = () => {
+  // Valores padrão
+  let isMobile = false;
+  let isSlowConnection = false;
+  let connectionType = 'unknown';
+
+  try {
+    // Detectar dispositivos móveis
+    if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+      const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+      const isMobileByAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i.test(userAgent.toLowerCase());
+      const isMobileBySize = window.innerWidth <= 768 || window.innerHeight <= 600;
+      const hasTouchSupport = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      
+      isMobile = isMobileByAgent || isMobileBySize || hasTouchSupport;
+      
+      // Verificar a conexão usando a Network Information API
+      const connection = (navigator as any).connection;
+      if (connection) {
+        connectionType = connection.type || connection.effectiveType || 'unknown';
+        isSlowConnection = connection.type === 'cellular' || 
+                          connection.effectiveType === 'slow-2g' || 
+                          connection.effectiveType === '2g' || 
+                          connection.saveData === true;
+      }
+    }
+    
+    // Armazenar os resultados para uso em toda a aplicação
+    if (typeof window !== 'undefined') {
+      (window as any).isMobileDevice = isMobile;
+      (window as any).isSlowConnection = isSlowConnection;
+      (window as any).connectionType = connectionType;
+    }
+    
+    console.log(`[supabaseClient] Detecção: Mobile=${isMobile}, Conexão=${connectionType}, Lenta=${isSlowConnection}`);
+  } catch (e) {
+    console.error('[supabaseClient] Erro na detecção de dispositivo/conexão:', e);
+  }
+  
+  return { isMobile, isSlowConnection, connectionType };
+};
+
+// Executar a detecção logo no início
+const { isMobile, isSlowConnection } = detectMobileAndConnection();
+
+// Ajustar configuração com base no tipo de dispositivo e conexão
+const getTimeoutConfig = () => {
+  let timeout = 30000; // Padrão: 30 segundos
+  
+  if (isMobile) {
+    // Dispositivos móveis
+    timeout = isSlowConnection ? 60000 : 40000; // 60s para conexões lentas, 40s para normais
+  }
+  
+  return timeout;
+};
+
 // Funções avançadas para o cliente Supabase
 // Inclui um fetch interceptor para registrar operações e duração
 export const supabaseConfig = {
@@ -25,6 +83,9 @@ export const supabaseConfig = {
     detectSessionInUrl: true
   },
   global: {
+    headers: {
+      'X-Client-Info': `mobile-${isMobile ? 'yes' : 'no'}-${isSlowConnection ? 'slow' : 'fast'}`
+    },
     fetch: async (url: RequestInfo | URL, options?: RequestInit) => {
       const startTime = performance.now();
       
@@ -64,8 +125,25 @@ export const supabaseConfig = {
           options.headers['apikey'] = supabaseKey;
         }
         
+        // Adicionar indicadores de dispositivo móvel e conexão lenta nos headers
+        options.headers['X-Mobile-Device'] = isMobile ? 'true' : 'false';
+        options.headers['X-Connection-Type'] = (window as any).connectionType || 'unknown';
+        
+        // Configurar timeout adaptativo
+        const timeout = getTimeoutConfig();
+        
+        // Criar uma Promise com timeout para abortar requisições que demorarem muito
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        
+        if (!options.signal) {
+          options.signal = controller.signal;
+        }
+        
         // Fazer a requisição
         const response = await fetch(url, options);
+        clearTimeout(timeoutId);
+        
         const endTime = performance.now();
         const duration = Math.round(endTime - startTime);
         
@@ -97,6 +175,12 @@ export const supabaseConfig = {
         const endTime = performance.now();
         const duration = Math.round(endTime - startTime);
         
+        // Verificar se é um erro de timeout
+        const isTimeoutError = error instanceof DOMException && error.name === 'AbortError';
+        const errorMessage = isTimeoutError 
+          ? `Timeout após ${duration}ms. Conexão lenta detectada.` 
+          : (error instanceof Error ? error.message : String(error));
+        
         // Registrar a operação com falha
         registerDbOperation({
           id: `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
@@ -105,10 +189,11 @@ export const supabaseConfig = {
           duration,
           timestamp: Date.now(),
           success: false,
-          error: error instanceof Error ? error.message : String(error)
+          error: errorMessage
         });
         
-        console.error(`Erro na requisição Supabase ${operationType} ${tableName}:`, error);
+        console.error(`Erro na requisição Supabase ${operationType} ${tableName}:`, 
+          isTimeoutError ? 'Timeout da requisição' : error);
         throw error;
       }
     }
