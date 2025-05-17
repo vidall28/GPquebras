@@ -1165,17 +1165,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Verificar se o dispositivo é móvel para otimizar o processo
       const isMobile = isMobileDevice();
       
-      // Em dispositivos móveis, reduzir o tamanho das imagens ainda mais se necessário
+      // Em dispositivos móveis, otimizar o processo sem limitar o número de fotos
       if (isMobile) {
         console.log('[DataContext] Processando em dispositivo móvel, otimizando imagens');
-        exchange.items = await Promise.all(exchange.items.map(async (item) => {
-          // Se houver muitas fotos em um item para dispositivo móvel, limitar
-          if (item.photos.length > 3) {
-            console.log(`[DataContext] Limitando fotos do item para dispositivo móvel (${item.photos.length} -> 3)`);
-            item.photos = item.photos.slice(0, 3);
-          }
-          return item;
-        }));
+        // Removida a limitação do número de fotos
       }
       
       // 1. Inserir a troca principal
@@ -1251,7 +1244,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Inserir as fotos do item com tratamento de erro por foto
           // Em dispositivos móveis, processar fotos em lotes menores para evitar timeout
           const photoErrors: string[] = [];
-          const batchSize = isMobile ? 1 : 3; // Processar uma foto de cada vez em dispositivos móveis
+          const batchSize = isMobile ? 2 : 3; // Aumentado de 1 para 2 fotos por vez em dispositivos móveis
           
           for (let j = 0; j < item.photos.length; j += batchSize) {
             const batch = item.photos.slice(j, j + batchSize);
@@ -1286,7 +1279,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             // Em dispositivos móveis, adicionar uma pequena pausa entre os lotes para evitar sobrecarga
             if (isMobile && j + batchSize < item.photos.length) {
-              await new Promise(resolve => setTimeout(resolve, 200));
+              await new Promise(resolve => setTimeout(resolve, 100)); // Reduzido de 200ms para 100ms
             }
           }
           

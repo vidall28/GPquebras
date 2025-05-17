@@ -25,6 +25,7 @@ const RecordExchange: React.FC = () => {
   const [quantity, setQuantity] = useState('1');
   const [reason, setReason] = useState('');
   const [photos, setPhotos] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false); // Estado para controle de carregamento
   const [items, setItems] = useState<Array<{
     id: string;
     productId: string;
@@ -130,19 +131,28 @@ const RecordExchange: React.FC = () => {
         return;
       }
       
+      setIsLoading(true); // Ativar estado de carregamento
+      
       // Identificar se está em dispositivo móvel para otimizar o processo
       const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       
       console.log(`[RecordExchange] Iniciando envio de registro, dispositivo móvel: ${isMobile ? 'Sim' : 'Não'}`);
       
       if (isMobile) {
-        toast.info('Processando registro no celular, isso pode levar alguns segundos...');
+        toast.info('Processando registro no celular, aguarde alguns instantes...', { duration: 10000 });
+        
+        // Adicionar uma notificação extra explicando o processo
+        setTimeout(() => {
+          if (!processoConcluido) {
+            toast.info('Estamos enviando suas fotos, isso pode levar um pouco mais de tempo dependendo da sua conexão...', { duration: 8000 });
+          }
+        }, 3000);
       }
       
       // Timeout de segurança para garantir que o processo termine mesmo que haja algum problema
       const timeoutId = setTimeout(() => {
         if (!processoConcluido) {
-          console.log('[RecordExchange] Timeout de segurança acionado após 30 segundos');
+          console.log('[RecordExchange] Timeout de segurança acionado');
           setIsLoading(false);
           
           // Limpar formulário mesmo assim
@@ -156,7 +166,7 @@ const RecordExchange: React.FC = () => {
           toast.success('Registro enviado! Verifique o histórico em alguns instantes.');
           processoConcluido = true;
         }
-      }, 30000);
+      }, 15000); // Reduzido de 30s para 15s para melhorar a experiência em dispositivos móveis
       
       // Create exchange - usando await para garantir tratamento adequado da promessa
       const exchangeId = await addExchange({
@@ -183,6 +193,7 @@ const RecordExchange: React.FC = () => {
       setNotes('');
       setItems([]);
       resetItemForm();
+      setIsLoading(false); // Desativar estado de carregamento
       
       if (exchangeId) {
         // Adicionar feedback extra com instruções para dispositivos móveis
@@ -204,6 +215,7 @@ const RecordExchange: React.FC = () => {
     } catch (error) {
       console.error('[RecordExchange] Erro ao enviar registro:', error);
       toast.error('Ocorreu um erro ao enviar o registro. Tente novamente.');
+      setIsLoading(false); // Desativar estado de carregamento em caso de erro
       processoConcluido = true;
     }
   };
@@ -282,6 +294,7 @@ const RecordExchange: React.FC = () => {
                 products={products}
                 removeItem={removeItem}
                 handleSubmit={handleSubmit}
+                isLoading={isLoading}
               />
             </CardContent>
           </Card>

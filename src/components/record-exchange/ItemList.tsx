@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { 
@@ -9,7 +8,7 @@ import {
   TableHeader, 
   TableRow 
 } from '@/components/ui/table';
-import { Check, Info, Trash } from 'lucide-react';
+import { Check, Info, Trash, Loader2 } from 'lucide-react';
 import { Product, ExchangeItem } from '@/context/DataContext';
 
 interface ItemListProps {
@@ -17,13 +16,15 @@ interface ItemListProps {
   products: Product[];
   removeItem: (id: string) => void;
   handleSubmit: (e: React.FormEvent) => void;
+  isLoading?: boolean;
 }
 
 const ItemList: React.FC<ItemListProps> = ({ 
   items, 
   products, 
   removeItem,
-  handleSubmit 
+  handleSubmit,
+  isLoading = false
 }) => {
   if (items.length === 0) {
     return (
@@ -66,6 +67,7 @@ const ItemList: React.FC<ItemListProps> = ({
                       size="icon"
                       onClick={() => removeItem(item.id)}
                       className="text-destructive"
+                      disabled={isLoading}
                     >
                       <Trash size={16} />
                     </Button>
@@ -81,8 +83,16 @@ const ItemList: React.FC<ItemListProps> = ({
         <div className="text-sm text-muted-foreground">
           {items.length} {items.length === 1 ? 'item adicionado' : 'itens adicionados'}
         </div>
-        <Button onClick={handleSubmit}>
-          <Check size={16} className="mr-1" /> Finalizar Registro
+        <Button onClick={handleSubmit} disabled={isLoading}>
+          {isLoading ? (
+            <>
+              <Loader2 size={16} className="mr-1 animate-spin" /> Processando...
+            </>
+          ) : (
+            <>
+              <Check size={16} className="mr-1" /> Finalizar Registro
+            </>
+          )}
         </Button>
       </div>
     </div>

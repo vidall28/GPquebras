@@ -2,8 +2,7 @@ import React from 'react';
 import { toast } from '@/lib/toast';
 
 // Constantes para configuração de imagens
-const MAX_IMAGE_SIZE = 2 * 1024 * 1024; // 2MB (reduzido de 5MB)
-const MAX_FILES_COUNT = 5; // Reduzido de 10 para melhor desempenho em dispositivos móveis
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB (aumentado de 2MB)
 const MAX_WIDTH = 600; // Reduzido de 800px para melhor desempenho
 const IMAGE_QUALITY = 0.6; // Reduzido de 0.7 para melhor compressão
 
@@ -14,12 +13,6 @@ export const handleImageUpload = (
 ) => {
   if (!files || files.length === 0) return;
   
-  // Verificar se não excede o limite de arquivos
-  if (files.length > MAX_FILES_COUNT) {
-    toast.error(`Limite máximo de ${MAX_FILES_COUNT} fotos excedido`);
-    return;
-  }
-  
   console.log(`[ImageUtils] Processando ${files.length} imagens no dispositivo ${isMobileDevice() ? 'móvel' : 'desktop'}`);
   
   // Verificar se está em dispositivo móvel para otimizar ainda mais
@@ -29,7 +22,7 @@ export const handleImageUpload = (
   // Convert files to base64
   Array.from(files).forEach(file => {
     if (file.size > MAX_IMAGE_SIZE) {
-      toast.error(`A imagem ${file.name} é muito grande (máx. 2MB)`);
+      toast.error(`A imagem ${file.name} é muito grande (máx. 10MB)`);
       return;
     }
     
