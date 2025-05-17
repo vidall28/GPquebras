@@ -157,7 +157,12 @@ const AdminRoute = ({ children }: AdminRouteProps) => {
 };
 
 // Componente de conteúdo da aplicação (RESTAURANDO LAYOUT E PROTEÇÃO, PÁGINAS SIMPLES)
-const AppContent = () => (
+const AppContent = ({ hasSession }: { hasSession: boolean | null }) => {
+  // Se hasSession for null, ainda estamos verificando
+  // Se for false, redirecionamos para login
+  const defaultRedirect = hasSession === false ? "/login" : "/dashboard";
+
+  return (
   <Router>
       <AuthProvider>
         <DataProvider>
@@ -177,8 +182,8 @@ const AppContent = () => (
             } />
             <Route path="/diagnostico" element={<DiagnosticsPage />} />
 
-            {/* Redirecionamento da Raiz - Tratado dentro da rota protegida agora */}
-            {/* <Route path="/" element={<Navigate to="/dashboard" replace />} /> */}
+            {/* Redirecionamento Explícito da Raiz baseado no estado da sessão */}
+            <Route path="/" element={<Navigate to={defaultRedirect} replace />} /> 
 
             {/* Protected Routes com AppLayout (RESTAURADO) */}
             <Route
@@ -258,11 +263,13 @@ const AppContent = () => (
         </DataProvider>
       </AuthProvider>
   </Router>
-);
+  );
+};
 
 // NOVO: Componente Inicializador
 const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isInitializing, setIsInitializing] = useState(true);
+  const [hasSession, setHasSession] = useState<boolean | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -270,14 +277,16 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
     const checkInitialSession = async () => {
       try {
-        // Apenas verifica a sessão, não busca perfil aqui
+        // Verifica a sessão 
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
           console.error('[AppInitializer] Error checking initial session:', error.message);
           toast.error(`Erro ao verificar sessão inicial: ${error.message}`);
+          if (isMounted) setHasSession(false);
         }
         if (session) {
            console.log('[AppInitializer] Initial session found.');
+           if (isMounted) setHasSession(true);
            // Inicializar sistemas dependentes aqui ao invés de no AuthContext
            try {
              // Importação dinâmica para evitar dependências circulares
@@ -295,10 +304,12 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
            // O AuthProvider cuidará de buscar o perfil via onAuthStateChange
         } else {
            console.log('[AppInitializer] No initial session found.');
+           if (isMounted) setHasSession(false);
         }
       } catch (e) {
         console.error('[AppInitializer] Critical error during initial session check:', e);
         toast.error('Erro crítico na inicialização da autenticação.');
+        if (isMounted) setHasSession(false);
       } finally {
         if (isMounted) {
           console.log('[AppInitializer] Initial check finished.');
@@ -315,8 +326,8 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
     };
   }, []);
 
-  // Remover a tela de carregamento e renderizar o conteúdo diretamente
-  return <>{children}</>;
+  // Passar o estado hasSession para o AppContent
+  return React.cloneElement(children as React.ReactElement, { hasSession });
 };
 
 // Componente principal da aplicação
@@ -331,7 +342,7 @@ function App() {
       <TooltipProvider>
         <QueryClientProvider client={queryClient}>
           <AppInitializer>
-            <AppContent />
+            <AppContent hasSession={null} />
           </AppInitializer>
         </QueryClientProvider>
       </TooltipProvider>
