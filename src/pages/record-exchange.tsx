@@ -14,7 +14,7 @@ import InstructionsCard from '@/components/record-exchange/InstructionsCard';
 
 const RecordExchange: React.FC = () => {
   const { user } = useAuth();
-  const { products, addExchange } = useData();
+  const { products, addExchange, fetchExchanges } = useData();
   
   // Form state
   const [label, setLabel] = useState('');
@@ -201,11 +201,28 @@ const RecordExchange: React.FC = () => {
           toast.success('Registro enviado! Aguarde alguns segundos e verifique o histórico.', { duration: 5000 });
           // Em dispositivos móveis, mostrar uma mensagem adicional explicando o que fazer
           setTimeout(() => {
-            toast.info('Se o registro não aparecer no histórico, puxe a tela para baixo para atualizar ou volte à tela inicial e retorne.', { duration: 8000 });
-          }, 2000);
+            toast.info('Se o registro não aparecer no histórico, puxe a tela para baixo para atualizar ou volte à página inicial e retorne.', { duration: 8000 });
+          }, 5000);
+          
+          // Forçar atualização do histórico
+          setTimeout(() => {
+            console.log('[RecordExchange] Forçando atualização do histórico após sucesso em dispositivo móvel');
+            fetchExchanges(true).catch(e => {
+              console.error('[RecordExchange] Erro ao atualizar histórico:', e);
+            });
+          }, 3000);
+          
+          // Segunda tentativa de atualização depois de um tempo maior
+          setTimeout(() => {
+            console.log('[RecordExchange] Segunda tentativa de atualização do histórico');
+            fetchExchanges(true).catch(e => {
+              console.error('[RecordExchange] Erro na segunda tentativa de atualização:', e);
+            });
+          }, 8000);
         } else {
           toast.success('Registro enviado com sucesso!');
         }
+        processoConcluido = true;
       } else {
         // Se exchangeId for null, significa que houve um erro
         toast.error('Houve um problema ao finalizar o registro. Tente novamente.');

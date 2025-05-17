@@ -53,6 +53,7 @@ interface DataContextType {
   deleteExchange: (id: string) => Promise<void>;
   getExchange: (id: string) => Exchange | undefined;
   fetchExchanges: (forceRefresh?: boolean) => Promise<void>;
+  forceRefreshExchanges: () => Promise<boolean>;
   
   // Users (only for admin)
   users: User[];
@@ -129,14 +130,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     try {
       const cacheKey = isAdmin ? 'all_exchanges' : `user_exchanges_${user.id}`;
+      const isMobile = isMobileDevice();
       
-      // Forçar limpeza de cache se solicitado
-      if (forceRefresh) {
-        console.log('Forçando atualização e limpando cache');
+      // Forçar limpeza de cache se solicitado ou em dispositivos móveis
+      if (forceRefresh || isMobile) {
+        console.log(`Forçando atualização e limpando cache. Dispositivo móvel: ${isMobile ? 'sim' : 'não'}`);
         clearCache(cacheKey);
       }
       
       // Buscar dados com cache baseado no perfil do usuário
+      // Tempo de cache reduzido para dispositivos móveis
+      const cacheTime = isMobile ? 15 : 60; // 15 segundos para mobile, 60 para desktop
+      
       const result = await getCachedOrFetch(cacheKey, async () => {
         // Criar a consulta base
         let query = supabase
@@ -197,7 +202,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }) || [];
         
         return processedExchanges;
-      }, 60); // Cache válido por 1 minuto
+      }, cacheTime);
       
       // Buscar informações dos usuários se tivermos trocas
       if (result.length > 0) {
@@ -1356,10 +1361,21 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Para dispositivos móveis, forçar uma atualização de dados depois de um período
       // para garantir que a lista de trocas será atualizada
       if (isMobile) {
+        // Primeiro timer para atualizar rápido
         setTimeout(() => {
-          console.log('[DataContext] Recarregando trocas após adição em dispositivo móvel');
-          fetchExchanges(true);
-        }, 5000);
+          console.log('[DataContext] Primeira atualização após adição em dispositivo móvel');
+          forceRefreshExchanges().catch(e => 
+            console.error('[DataContext] Erro na primeira atualização após adição:', e)
+          );
+        }, 2000); // Reduzir para 2 segundos
+        
+        // Segundo timer para garantir que os dados foram sincronizados
+        setTimeout(() => {
+          console.log('[DataContext] Segunda atualização após adição em dispositivo móvel');
+          forceRefreshExchanges().catch(e => 
+            console.error('[DataContext] Erro na segunda atualização após adição:', e)
+          );
+        }, 6000); // 6 segundos
       }
       
       return exchangeData.id;
@@ -1384,6 +1400,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Função para forçar a atualização da lista de trocas/quebras
+  const forceRefreshExchanges = async () => {
+    if (!user) return;
+    
+    console.log('[DataContext] Forçando atualização completa de registros');
+    
+    try {
+      // Limpar todos os caches relacionados a trocas
+      const cacheKey = isAdmin ? 'all_exchanges' : `user_exchanges_${user.id}`;
+      clearCache(cacheKey);
+      clearCache('users_info');
+      
+      // Fazer a requisição sem cache
+      await fetchExchanges(true);
+      
+      console.log('[DataContext] Atualização forçada concluída');
+      return true;
+    } catch (error) {
+      console.error('[DataContext] Erro na atualização forçada:', error);
+      return false;
+    }
+  };
+
   return (
     <DataContext.Provider
       value={{
@@ -1402,6 +1441,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteExchange,
         getExchange,
         fetchExchanges,
+        forceRefreshExchanges,
         
         users,
         updateUserStatus,
