@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
 import { Product } from '@/context/DataContext';
@@ -41,7 +41,7 @@ import { toast } from '@/lib/toast';
 
 const History: React.FC = () => {
   const { user, isAdmin } = useAuth();
-  const { exchanges, products } = useData();
+  const { exchanges, products, forceRefreshExchanges } = useData();
   
   // Filter and search state
   const [search, setSearch] = useState('');
@@ -49,10 +49,53 @@ const History: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Detail view state
   const [selectedExchange, setSelectedExchange] = useState<typeof exchanges[0] | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  
+  // Verificar se há um registro recente para mostrar
+  useEffect(() => {
+    console.log('[History] Verificando registros recentes...');
+    
+    // Verificar se há um registro recente no localStorage
+    try {
+      const lastExchangeId = localStorage.getItem('lastExchangeId');
+      const lastExchangeTime = localStorage.getItem('lastExchangeTime');
+      
+      if (lastExchangeId && lastExchangeTime) {
+        const timeAgo = Date.now() - parseInt(lastExchangeTime);
+        
+        // Se o registro foi feito há menos de 5 minutos, forçar atualização
+        if (timeAgo < 5 * 60 * 1000) {
+          console.log(`[History] Encontrado registro recente (${timeAgo / 1000}s atrás): ${lastExchangeId}`);
+          
+          setIsRefreshing(true);
+          forceRefreshExchanges(lastExchangeId)
+            .then(success => {
+              console.log(`[History] Atualização forçada ${success ? 'bem-sucedida' : 'falhou'}`);
+              
+              if (success) {
+                toast.success('Seu registro recente foi carregado com sucesso!');
+                
+                // Limpar do localStorage após carregamento bem-sucedido
+                localStorage.removeItem('lastExchangeId');
+                localStorage.removeItem('lastExchangeTime');
+              }
+            })
+            .catch(e => {
+              console.error('[History] Erro na atualização forçada:', e);
+            })
+            .finally(() => {
+              setIsRefreshing(false);
+            });
+        }
+      }
+    } catch (e) {
+      console.error('[History] Erro ao verificar localStorage:', e);
+    }
+  }, [forceRefreshExchanges]);
   
   // Filter exchanges by user if not admin
   const userExchanges = isAdmin 

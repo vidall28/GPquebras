@@ -14,7 +14,7 @@ import InstructionsCard from '@/components/record-exchange/InstructionsCard';
 
 const RecordExchange: React.FC = () => {
   const { user } = useAuth();
-  const { products, addExchange, fetchExchanges } = useData();
+  const { products, addExchange, fetchExchanges, forceRefreshExchanges } = useData();
   
   // Form state
   const [label, setLabel] = useState('');
@@ -199,15 +199,25 @@ const RecordExchange: React.FC = () => {
         // Adicionar feedback extra com instruções para dispositivos móveis
         if (isMobile) {
           toast.success('Registro enviado! Aguarde alguns segundos e verifique o histórico.', { duration: 5000 });
+          
+          // Armazenar o ID do último registro enviado para verificações futuras
+          try {
+            localStorage.setItem('lastExchangeId', exchangeId);
+            localStorage.setItem('lastExchangeTime', Date.now().toString());
+            console.log(`[RecordExchange] Registro salvo em localStorage: ${exchangeId}`);
+          } catch (e) {
+            console.error('[RecordExchange] Erro ao salvar no localStorage:', e);
+          }
+          
           // Em dispositivos móveis, mostrar uma mensagem adicional explicando o que fazer
           setTimeout(() => {
             toast.info('Se o registro não aparecer no histórico, puxe a tela para baixo para atualizar ou volte à página inicial e retorne.', { duration: 8000 });
           }, 5000);
           
-          // Forçar atualização do histórico
+          // Forçar atualização do histórico - 1ª tentativa
           setTimeout(() => {
-            console.log('[RecordExchange] Forçando atualização do histórico após sucesso em dispositivo móvel');
-            fetchExchanges(true).catch(e => {
+            console.log('[RecordExchange] Primeira atualização após adição em dispositivo móvel');
+            forceRefreshExchanges(exchangeId).catch(e => {
               console.error('[RecordExchange] Erro ao atualizar histórico:', e);
             });
           }, 3000);
@@ -215,10 +225,18 @@ const RecordExchange: React.FC = () => {
           // Segunda tentativa de atualização depois de um tempo maior
           setTimeout(() => {
             console.log('[RecordExchange] Segunda tentativa de atualização do histórico');
-            fetchExchanges(true).catch(e => {
+            forceRefreshExchanges(exchangeId).catch(e => {
               console.error('[RecordExchange] Erro na segunda tentativa de atualização:', e);
             });
           }, 8000);
+          
+          // Terceira tentativa com tempo ainda maior para garantir
+          setTimeout(() => {
+            console.log('[RecordExchange] Terceira e última tentativa de atualização do histórico');
+            forceRefreshExchanges(exchangeId).catch(e => {
+              console.error('[RecordExchange] Erro na terceira tentativa de atualização:', e);
+            });
+          }, 15000);
         } else {
           toast.success('Registro enviado com sucesso!');
         }

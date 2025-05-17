@@ -53,7 +53,7 @@ interface DataContextType {
   deleteExchange: (id: string) => Promise<void>;
   getExchange: (id: string) => Exchange | undefined;
   fetchExchanges: (forceRefresh?: boolean) => Promise<void>;
-  forceRefreshExchanges: () => Promise<boolean>;
+  forceRefreshExchanges: (specificExchangeId?: string) => Promise<boolean>;
   
   // Users (only for admin)
   users: User[];
@@ -1401,12 +1401,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Função para forçar a atualização da lista de trocas/quebras
-  const forceRefreshExchanges = async () => {
-    if (!user) return;
+  const forceRefreshExchanges = async (specificExchangeId?: string) => {
+    if (!user) return false;
     
-    console.log('[DataContext] Forçando atualização completa de registros');
+    console.log(`[DataContext] Forçando atualização completa de registros${specificExchangeId ? ` (foco no ID: ${specificExchangeId})` : ''}`);
     
     try {
+      // Se um ID específico foi fornecido, verificar esse registro primeiro
+      if (specificExchangeId) {
+        const verified = await verifyAndLoadExchange(specificExchangeId);
+        if (verified) {
+          console.log(`[DataContext] Registro específico ${specificExchangeId} verificado e atualizado com sucesso`);
+        } else {
+          console.warn(`[DataContext] Não foi possível verificar o registro específico ${specificExchangeId}`);
+        }
+      }
+      
       // Limpar todos os caches relacionados a trocas
       const cacheKey = isAdmin ? 'all_exchanges' : `user_exchanges_${user.id}`;
       clearCache(cacheKey);
@@ -1415,10 +1425,75 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Fazer a requisição sem cache
       await fetchExchanges(true);
       
+      // Se for um administrador, verificar especificamente os registros pendentes
+      if (isAdmin) {
+        try {
+          console.log('[DataContext] Verificando registros pendentes para administrador');
+          const { data: pendingData, error: pendingError } = await supabase
+            .from('exchanges')
+            .select('id')
+            .eq('status', 'pending')
+            .order('created_at', { ascending: false });
+            
+          if (pendingError) {
+            console.error('[DataContext] Erro ao verificar registros pendentes:', pendingError);
+          } else if (pendingData && pendingData.length > 0) {
+            console.log(`[DataContext] Encontrados ${pendingData.length} registros pendentes para verificação`);
+            
+            // Verificar até 3 registros mais recentes
+            for (let i = 0; i < Math.min(pendingData.length, 3); i++) {
+              await verifyAndLoadExchange(pendingData[i].id);
+            }
+          }
+        } catch (pendingError) {
+          console.error('[DataContext] Erro ao processar registros pendentes:', pendingError);
+        }
+      }
+      
       console.log('[DataContext] Atualização forçada concluída');
       return true;
     } catch (error) {
       console.error('[DataContext] Erro na atualização forçada:', error);
+      return false;
+    }
+  };
+
+  // Função para verificar e garantir que um registro específico exista
+  const verifyAndLoadExchange = async (exchangeId: string): Promise<boolean> => {
+    if (!exchangeId || !user) return false;
+    
+    console.log(`[DataContext] Verificando registro específico: ${exchangeId}`);
+    
+    try {
+      // Buscar diretamente do banco de dados, ignorando cache
+      const { data: exchangeData, error } = await supabase
+        .from('exchanges')
+        .select('*')
+        .eq('id', exchangeId)
+        .single();
+      
+      if (error) {
+        console.error(`[DataContext] Erro ao verificar registro ${exchangeId}:`, error);
+        return false;
+      }
+      
+      if (!exchangeData) {
+        console.log(`[DataContext] Registro ${exchangeId} não encontrado no banco`);
+        return false;
+      }
+      
+      console.log(`[DataContext] Registro ${exchangeId} encontrado no banco:`, exchangeData);
+      
+      // Atualizar explicitamente este registro no state
+      await fetchExchangeAndUpdateState(exchangeId);
+      
+      // Verificar se foi adicionado ao state local
+      const isInState = exchanges.some(e => e.id === exchangeId);
+      console.log(`[DataContext] Registro está no state local? ${isInState ? 'Sim' : 'Não'}`);
+      
+      return true;
+    } catch (e) {
+      console.error(`[DataContext] Erro ao verificar registro ${exchangeId}:`, e);
       return false;
     }
   };
@@ -1465,8 +1540,15 @@ export const useData = () => {
   return context;
 };
 
-// Detectar se é dispositivo móvel
+// Melhorar a detecção de dispositivos móveis
 const isMobileDevice = (): boolean => {
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-         (window.innerWidth <= 768);
+  // Checagem mais robusta para dispositivos móveis
+  const userAgent = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+  const isMobileByAgent = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet|ipad/i.test(userAgent.toLowerCase());
+  const isMobileBySize = window.innerWidth <= 768 || window.innerHeight <= 600;
+  
+  console.log(`[DetectorMobile] Agente: ${userAgent.substring(0, 50)}...`);
+  console.log(`[DetectorMobile] Detecção: Agente=${isMobileByAgent}, Tamanho=${isMobileBySize}, Final=${isMobileByAgent || isMobileBySize}`);
+  
+  return isMobileByAgent || isMobileBySize;
 };

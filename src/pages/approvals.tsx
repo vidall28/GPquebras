@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useData } from '@/context/DataContext';
 import { Product } from '@/context/DataContext';
@@ -59,7 +59,7 @@ import { Navigate } from 'react-router-dom';
 
 const Approvals: React.FC = () => {
   const { user, isAdmin } = useAuth();
-  const { exchanges, products, updateExchange } = useData();
+  const { exchanges, products, updateExchange, forceRefreshExchanges } = useData();
   
   // If not admin, redirect to dashboard
   if (!isAdmin) {
@@ -76,7 +76,38 @@ const Approvals: React.FC = () => {
   const [selectedExchange, setSelectedExchange] = useState<typeof exchanges[0] | null>(null);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [approvalNotes, setApprovalNotes] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false); // Status de carregamento
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
+  // Efeito para forçar atualização na montagem do componente
+  useEffect(() => {
+    console.log('[Approvals] Montando componente, verificando registros pendentes...');
+    
+    // Função para forçar atualização
+    const refreshData = async () => {
+      setIsRefreshing(true);
+      try {
+        await forceRefreshExchanges();
+        console.log('[Approvals] Dados atualizados com sucesso');
+      } catch (error) {
+        console.error('[Approvals] Erro ao atualizar dados:', error);
+      } finally {
+        setIsRefreshing(false);
+      }
+    };
+    
+    // Executar refresh inicial
+    refreshData();
+    
+    // Configurar intervalo de atualização (a cada 30 segundos)
+    const intervalId = setInterval(() => {
+      console.log('[Approvals] Verificando atualizações automáticas...');
+      refreshData();
+    }, 30000);
+    
+    // Limpar intervalo ao desmontar
+    return () => clearInterval(intervalId);
+  }, [forceRefreshExchanges]);
   
   // Get pending exchanges
   const pendingExchanges = exchanges.filter(exchange => exchange.status === 'pending');
