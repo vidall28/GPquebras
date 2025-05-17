@@ -115,6 +115,62 @@ export const supabaseConfig = {
   }
 };
 
+// Criar função para limpar sessões inválidas
+export const clearInvalidSessions = async () => {
+  // Se estamos em uma página de autenticação, não interferir
+  const currentPath = window.location.pathname;
+  if (currentPath === '/login' || currentPath === '/register') {
+    console.log('[supabaseClient] Página de autenticação, não verificando sessões');
+    return;
+  }
+  
+  console.log('[supabaseClient] Verificando validade da sessão armazenada...');
+  try {
+    // Tentar obter a sessão atual
+    const { data: { session }, error } = await supabase.auth.getSession();
+    
+    // Se houver erro ou não houver sessão, limpar o armazenamento local
+    if (error || !session) {
+      console.log('[supabaseClient] Sessão inválida ou não encontrada, redirecionando para login');
+      localStorage.removeItem('sb-auth-token');
+      localStorage.removeItem('sb-refresh-token');
+      
+      // Se não estamos na página de login, redirecionar
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+      return;
+    }
+    
+    console.log('[supabaseClient] Sessão válida encontrada para usuário:', session.user.email);
+    
+    // Verificar se a sessão está prestes a expirar (menos de 15 minutos)
+    const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+    const now = Date.now();
+    const timeLeft = expiresAt - now;
+    
+    if (timeLeft < 15 * 60 * 1000) { // menos de 15 minutos
+      console.log('[supabaseClient] Sessão expira em breve, tentando renovar...');
+      await supabase.auth.refreshSession();
+    }
+  } catch (e) {
+    console.error('[supabaseClient] Erro ao verificar sessão:', e);
+  }
+};
+
+// Verificar sessão quando o arquivo for carregado (na recarga da página)
+if (typeof window !== 'undefined') {
+  clearInvalidSessions();
+  
+  // Também verificar quando a visibilidade da página mudar
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[supabaseClient] Página visível novamente, verificando sessão...');
+      clearInvalidSessions();
+    }
+  });
+}
+
 // CRIAR e EXPORTAR o cliente Supabase
 // Certifique-se que as variáveis de ambiente estão definidas
 if (!supabaseUrl || !supabaseKey) {

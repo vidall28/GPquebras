@@ -45,15 +45,19 @@ const queryClient = new QueryClient({
   },
 });
 
-// Componente de carregamento
-const LoadingScreen = ({ message }: { message: string }) => (
-  <div className="flex items-center justify-center min-h-screen bg-background">
-    <div className="flex flex-col items-center space-y-4">
-      <div className="w-16 h-16 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
-      <h2 className="text-2xl font-medium text-foreground">{message}</h2>
+// Componente de LoadingScreen
+const LoadingScreen: React.FC<{ message?: string }> = ({ message = 'Carregando...' }) => {
+  return (
+    <div className="fixed inset-0 flex items-center justify-center bg-background z-50">
+      <div className="text-center">
+        <div className="mb-4">
+          <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
+        </div>
+        <p className="text-sm text-muted-foreground">{message}</p>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // Componente de recuperação para erros críticos
 const RecoveryMode = () => {
@@ -182,8 +186,15 @@ const AppContent = ({ hasSession }: { hasSession: boolean | null }) => {
             } />
             <Route path="/diagnostico" element={<DiagnosticsPage />} />
 
-            {/* Redirecionamento Explícito da Raiz baseado no estado da sessão */}
-            <Route path="/" element={<Navigate to={defaultRedirect} replace />} /> 
+            {/* Main Route */}
+            <Route 
+              path="/" 
+              element={
+                hasSession === false ? 
+                  <Navigate to="/login" replace /> : 
+                  <Navigate to="/dashboard" replace /> 
+              } 
+            />
 
             {/* Protected Routes com AppLayout (RESTAURADO) */}
             <Route
@@ -277,17 +288,49 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
 
     const checkInitialSession = async () => {
       try {
+        // Verificar se estamos em uma página de autenticação
+        const isAuthPage = window.location.pathname === '/login' || window.location.pathname === '/register';
+        
+        // Se estivermos em uma página de autenticação, não forçar redirecionamento
+        if (isAuthPage) {
+          console.log('[AppInitializer] Auth page detected, not forcing redirect');
+          if (isMounted) {
+            setHasSession(false);
+            setIsInitializing(false);
+          }
+          return;
+        }
+        
         // Verifica a sessão 
         const { data: { session }, error } = await supabase.auth.getSession();
+        
         if (error) {
           console.error('[AppInitializer] Error checking initial session:', error.message);
           toast.error(`Erro ao verificar sessão inicial: ${error.message}`);
-          if (isMounted) setHasSession(false);
+          if (isMounted) {
+            setHasSession(false);
+            setIsInitializing(false);
+          }
+          // Forçar redirecionamento para login em caso de erro
+          window.location.href = '/login';
+          return;
         }
-        if (session) {
+        
+        if (!session) {
+           console.log('[AppInitializer] No initial session found, redirecting to login');
+           if (isMounted) setHasSession(false);
+           
+           // Se não estamos na página de login, redirecionar automaticamente
+           if (window.location.pathname !== '/login') {
+             console.log('[AppInitializer] Not on login page, forcing redirect');
+             window.location.href = '/login';
+             return;
+           }
+        } else {
            console.log('[AppInitializer] Initial session found.');
            if (isMounted) setHasSession(true);
-           // Inicializar sistemas dependentes aqui ao invés de no AuthContext
+           
+           // Inicializar sistemas dependentes
            try {
              // Importação dinâmica para evitar dependências circulares
              const notificationsModule = await import('@/lib/notifications');
@@ -301,10 +344,13 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
            } catch (e) {
              console.error('[AppInitializer] Error initializing dependent systems:', e);
            }
-           // O AuthProvider cuidará de buscar o perfil via onAuthStateChange
-        } else {
-           console.log('[AppInitializer] No initial session found.');
-           if (isMounted) setHasSession(false);
+           
+           // Verificar se precisamos tentar redirecionar o usuário para o dashboard
+           if (window.location.pathname === '/' || window.location.pathname === '') {
+             console.log('[AppInitializer] User on root path, redirecting to dashboard');
+             window.location.href = '/dashboard';
+             return;
+           }
         }
       } catch (e) {
         console.error('[AppInitializer] Critical error during initial session check:', e);
@@ -325,6 +371,11 @@ const AppInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) =
       console.log('[AppInitializer] Unmounted.');
     };
   }, []);
+
+  // Verificar se está inicializando - mostrar indicação de carregamento se necessário
+  if (isInitializing) {
+    return <LoadingScreen message="Verificando sessão..." />;
+  }
 
   // Passar o estado hasSession para o AppContent
   return React.cloneElement(children as React.ReactElement, { hasSession });

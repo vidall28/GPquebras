@@ -133,6 +133,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsLoading(true);
       
       try {
+        // Verificar se existe uma sessão
         const { data: { session: currentSession }, error } = await supabase.auth.getSession();
         
         if (error) {
@@ -149,16 +150,71 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
         
+        // Se encontrou uma sessão, atualize o estado da sessão
         setSession(currentSession);
+        
+        // Verificar se já temos o objeto de usuário
+        if (user?.id === currentSession.user.id) {
+          logStateChange('checkSessionStatus: Usuário já carregado, mantendo dados', user);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Tentar buscar o perfil do usuário
+        logStateChange('checkSessionStatus: Buscando dados do perfil do usuário', currentSession.user.id);
         const userProfile = await fetchUserProfile(currentSession.user.id);
         
         if (userProfile) {
+          logStateChange('checkSessionStatus: Perfil carregado com sucesso', userProfile);
           setUser(userProfile);
         } else {
-          setUser(null);
+          // Se não conseguiu buscar o perfil, vamos tentar criar um básico
+          logStateChange('checkSessionStatus: Perfil não encontrado, criando perfil básico');
+          
+          // Verificar se temos email na sessão
+          const email = currentSession.user.email;
+          if (!email) {
+            logStateChange('checkSessionStatus: Usuário sem email, não é possível criar perfil básico');
+            setUser(null);
+            setIsLoading(false);
+            return;
+          }
+          
+          // Criar perfil básico com dados da sessão
+          try {
+            const baseUser: User = {
+              id: currentSession.user.id,
+              email: email,
+              name: email.split('@')[0],
+              registration: '0000000',
+              role: 'user',
+              status: 'active'
+            };
+            
+            // Tentar inserir no banco
+            logStateChange('checkSessionStatus: Tentando inserir perfil básico', baseUser);
+            const { error: insertError } = await supabase
+              .from('users')
+              .insert([baseUser]);
+              
+            if (insertError) {
+              logStateChange('checkSessionStatus: Erro ao inserir perfil básico', insertError);
+              // Mesmo com erro, vamos definir o usuário com dados básicos para evitar tela vazia
+              setUser(baseUser);
+            } else {
+              logStateChange('checkSessionStatus: Perfil básico criado com sucesso');
+              setUser(baseUser);
+            }
+          } catch (createError) {
+            logStateChange('checkSessionStatus: Erro ao criar perfil básico', createError);
+            setUser(null);
+          }
         }
       } catch (e) {
         logStateChange('checkSessionStatus: Erro inesperado', e);
+        // Em caso de erro, limpar dados do usuário
+        setUser(null);
+        setSession(null);
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -226,7 +282,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         logStateChange('handleVisibilityChange: Usuário retornou à página, verificando sessão...');
-        checkSessionStatus();
+        
+        // Verificar se temos sessão mas dados incompletos do usuário
+        if (session && (!user || user.name === 'Usuário' || !user.email || !user.registration)) {
+          logStateChange('handleVisibilityChange: Sessão existe mas dados do usuário estão incompletos. Recarregando perfil...');
+          
+          // Recarregar perfil
+          (async () => {
+            try {
+              setIsLoading(true);
+              const profile = await fetchUserProfile(session.user.id);
+              if (profile) {
+                setUser(profile);
+                logStateChange('handleVisibilityChange: Perfil recarregado com sucesso', profile);
+              } else {
+                logStateChange('handleVisibilityChange: Não foi possível recarregar o perfil');
+              }
+            } catch (e) {
+              logStateChange('handleVisibilityChange: Erro ao recarregar perfil', e);
+            } finally {
+              setIsLoading(false);
+            }
+          })();
+        } else {
+          // Verificação normal
+          checkSessionStatus();
+        }
       }
     };
 
@@ -263,7 +344,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logStateChange('login: Attempting...', { email });
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
         logStateChange('login: Auth error', error);
         // Erros comuns: Invalid login credentials, Email not confirmed
@@ -277,36 +358,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setIsLoading(false); // Termina loading no erro
       } else {
         logStateChange('login: Success. Waiting for onAuthStateChange.');
-        toast.success('Login realizado com sucesso!');
         
-        // Verificar se onAuthStateChange não está sendo chamado
-        setTimeout(() => {
-          if (isLoading) {
-            logStateChange('login: Forçando finalização do login após timeout');
-            
-            // Verificar estado da sessão manualmente se o evento não foi processado
-            supabase.auth.getSession().then(async ({ data }) => {
-              if (data.session) {
-                logStateChange('login: Sessão encontrada manualmente, buscando perfil...');
-                const profile = await fetchUserProfile(data.session.user.id);
-                if (profile) {
-                  setUser(profile);
-                  setSession(data.session);
-                  navigate('/dashboard');
-                }
-              }
-              setIsLoading(false);
-            });
+        // Verificar se temos os dados da sessão e usuário imediatamente
+        if (data && data.session) {
+          // Carregar perfil explicitamente
+          const profile = await fetchUserProfile(data.session.user.id);
+          
+          if (profile) {
+            logStateChange('login: Perfil carregado com sucesso após login', profile);
+            setUser(profile);
+            setSession(data.session);
+            toast.success('Login realizado com sucesso!');
+            navigate('/dashboard');
+          } else {
+            logStateChange('login: Perfil não encontrado após autenticação');
+            toast.error('Falha ao carregar perfil após autenticação. Por favor, tente novamente.');
+            // Fazer logout se não conseguiu carregar o perfil
+            await supabase.auth.signOut();
           }
-        }, 3000); // 3 segundos de timeout para garantir que o processo de login seja concluído
+        } else {
+          logStateChange('login: Sessão não retornada após autenticação');
+          toast.error('Erro ao iniciar sessão. Por favor, tente novamente.');
+        }
+        
+        setIsLoading(false);
       }
     } catch (error) {
       logStateChange('login: Unexpected error', error);
       toast.error('Erro inesperado durante o login.');
       setIsLoading(false); // Termina loading no erro
     }
-    // Não colocar finally setIsLoading(false) aqui, pois o sucesso depende do onAuthStateChange
-  }, [navigate, fetchUserProfile, isLoading]);
+  }, [navigate, fetchUserProfile]);
 
   const register = useCallback(async (
     registration: string,
